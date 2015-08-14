@@ -4,9 +4,9 @@
 
 part of dart.async;
 
-typedef dynamic ZoneCallback();
-typedef dynamic ZoneUnaryCallback(arg);
-typedef dynamic ZoneBinaryCallback(arg1, arg2);
+typedef E ZoneCallback<E>();
+typedef E ZoneUnaryCallback<E, E2>(E2 arg);
+typedef E ZoneBinaryCallback<E, E2, E3>(E2 arg1, E3 arg2);
 
 typedef dynamic HandleUncaughtErrorHandler(
     Zone self, ZoneDelegate parent, Zone zone, error, StackTrace stackTrace);
@@ -84,12 +84,12 @@ abstract class ZoneSpecification {
         Zone self, ZoneDelegate parent, Zone zone, f(arg), arg),
     dynamic runBinary(Zone self, ZoneDelegate parent, Zone zone,
                       f(arg1, arg2), arg1, arg2),
-    ZoneCallback registerCallback(
-        Zone self, ZoneDelegate parent, Zone zone, f()),
-    ZoneUnaryCallback registerUnaryCallback(
-        Zone self, ZoneDelegate parent, Zone zone, f(arg)),
-    ZoneBinaryCallback registerBinaryCallback(
-        Zone self, ZoneDelegate parent, Zone zone, f(arg1, arg2)),
+    ZoneCallback<E> registerCallback<E>(
+        Zone self, ZoneDelegate parent, Zone zone, E f()),
+    ZoneUnaryCallback<E, E2> registerUnaryCallback(
+        Zone self, ZoneDelegate parent, Zone zone, E f(E2 arg)),
+    ZoneBinaryCallback<E, E2, E3> registerBinaryCallback(
+        Zone self, ZoneDelegate parent, Zone zone, E f(E2 arg1, E3 arg2)),
     AsyncError errorCallback(Zone self, ZoneDelegate parent, Zone zone,
                              Object error, StackTrace stackTrace),
     void scheduleMicrotask(
@@ -115,12 +115,12 @@ abstract class ZoneSpecification {
         Zone self, ZoneDelegate parent, Zone zone, f(arg), arg): null,
     dynamic runBinary(Zone self, ZoneDelegate parent, Zone zone,
                       f(arg1, arg2), arg1, arg2): null,
-    ZoneCallback registerCallback(
-        Zone self, ZoneDelegate parent, Zone zone, f()): null,
-    ZoneUnaryCallback registerUnaryCallback(
-        Zone self, ZoneDelegate parent, Zone zone, f(arg)): null,
-    ZoneBinaryCallback registerBinaryCallback(
-        Zone self, ZoneDelegate parent, Zone zone, f(arg1, arg2)): null,
+    ZoneCallback<E> registerCallback<E>(
+        Zone self, ZoneDelegate parent, Zone zone, E f()): null,
+    ZoneUnaryCallback<E, E2> registerUnaryCallback<E, E2>(
+        Zone self, ZoneDelegate parent, Zone zone, E f(E2 arg)): null,
+    ZoneBinaryCallback<E, E2, E3> registerBinaryCallback(
+        Zone self, ZoneDelegate parent, Zone zone, E f(E2 arg1, E3 arg2)): null,
     AsyncError errorCallback(Zone self, ZoneDelegate parent, Zone zone,
                              Object error, StackTrace stackTrace),
     void scheduleMicrotask(
@@ -234,9 +234,9 @@ abstract class ZoneDelegate {
   dynamic run(Zone zone, f());
   dynamic runUnary(Zone zone, f(arg), arg);
   dynamic runBinary(Zone zone, f(arg1, arg2), arg1, arg2);
-  ZoneCallback registerCallback(Zone zone, f());
-  ZoneUnaryCallback registerUnaryCallback(Zone zone, f(arg));
-  ZoneBinaryCallback registerBinaryCallback(Zone zone, f(arg1, arg2));
+  ZoneCallback<E> registerCallback<E>(Zone zone, E f());
+  ZoneUnaryCallback<E, E2> registerUnaryCallback<E, E2>(Zone zone, E f(E2 arg));
+  ZoneBinaryCallback<E, E2, E3> registerBinaryCallback<E, E2, E3>(Zone zone, E f(E2 arg1, E3 arg2));
   AsyncError errorCallback(Zone zone, Object error, StackTrace stackTrace);
   void scheduleMicrotask(Zone zone, f());
   Timer createTimer(Zone zone, Duration duration, void f());
@@ -356,21 +356,21 @@ abstract class Zone {
    * Returns a potentially new callback that should be used in place of the
    * given [callback].
    */
-  ZoneCallback registerCallback(callback());
+  ZoneCallback<E> registerCallback<E>(E callback());
 
   /**
    * Registers the given callback in this zone.
    *
    * Similar to [registerCallback] but with a unary callback.
    */
-  ZoneUnaryCallback registerUnaryCallback(callback(arg));
+  ZoneUnaryCallback<E, E2> registerUnaryCallback<E, E2>(E callback(E2 arg));
 
   /**
    * Registers the given callback in this zone.
    *
    * Similar to [registerCallback] but with a unary callback.
    */
-  ZoneBinaryCallback registerBinaryCallback(callback(arg1, arg2));
+  ZoneBinaryCallback<E, E2, E3> registerBinaryCallback(E callback(E2 arg1, E3 arg2));
 
   /**
    *  Equivalent to:
@@ -380,7 +380,7 @@ abstract class Zone {
    *      return () => this.run(registered);
    *
    */
-  ZoneCallback bindCallback(f(), { bool runGuarded: true });
+  ZoneCallback<E> bindCallback<E>(E f(), { bool runGuarded: true });
 
   /**
    *  Equivalent to:
@@ -389,7 +389,7 @@ abstract class Zone {
    *      if (runGuarded) return (arg) => this.runUnaryGuarded(registered, arg);
    *      return (arg) => thin.runUnary(registered, arg);
    */
-  ZoneUnaryCallback bindUnaryCallback(f(arg), { bool runGuarded: true });
+  ZoneUnaryCallback<E, E2> bindUnaryCallback<E, E2>(E f(E2 arg), { bool runGuarded: true });
 
   /**
    *  Equivalent to:
@@ -400,8 +400,8 @@ abstract class Zone {
    *      }
    *      return (arg1, arg2) => thin.runBinary(registered, arg1, arg2);
    */
-  ZoneBinaryCallback bindBinaryCallback(
-      f(arg1, arg2), { bool runGuarded: true });
+  ZoneBinaryCallback<E, E2, E3> bindBinaryCallback<E, E2, E3>(
+      E f(E2 arg1, E3 arg2), { bool runGuarded: true });
 
   /**
    * Intercepts errors when added programmtically to a `Future` or `Stream`.
@@ -519,7 +519,7 @@ class _ZoneDelegate implements ZoneDelegate {
         implZone, _parentDelegate(implZone), zone, f, arg1, arg2);
   }
 
-  ZoneCallback registerCallback(Zone zone, f()) {
+  ZoneCallback<E> registerCallback<E>(Zone zone, E f()) {
     _ZoneFunction implementation = _delegationTarget._registerCallback;
     _Zone implZone = implementation.zone;
     RegisterCallbackHandler handler = implementation.function;
