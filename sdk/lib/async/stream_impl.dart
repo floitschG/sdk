@@ -921,7 +921,7 @@ class _BroadcastSubscriptionWrapper<T> implements StreamSubscription<T> {
     return _stream._isSubscriptionPaused;
   }
 
-  Future asFuture([var futureValue]) {
+  Future<E> asFuture<E>([/*E | Future<E>*/ futureValue]) {
     throw new UnsupportedError(
         "Cannot change handlers of asBroadcastStream source subscription.");
   }
