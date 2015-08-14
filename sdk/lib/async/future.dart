@@ -254,11 +254,11 @@ abstract class Future<T> {
    * The call to `cleanUp` should not throw. If it does, the error will be an
    * uncaught asynchronous error.
    */
-  static Future<List> wait(Iterable<Future> futures,
-                           {bool eagerError: false,
-                            void cleanUp(successValue)}) {
-    final _Future<List> result = new _Future<List>();
-    List values;  // Collects the values. Set to null on error.
+  static Future<List<E>> wait<E>(Iterable<Future<E>> futures,
+                                 {bool eagerError: false,
+                                  void cleanUp(E successValue)}) {
+    final _Future<List<E>> result = new _Future<List<E>>();
+    List<E> values;  // Collects the values. Set to null on error.
     int remaining = 0;  // How many futures are we waiting for.
     var error;   // The first error from a future.
     StackTrace stackTrace;  // The stackTrace that came with the error.
@@ -289,9 +289,9 @@ abstract class Future<T> {
 
     // As each future completes, put its value into the corresponding
     // position in the list of values.
-    for (Future future in futures) {
+    for (Future<E> future in futures) {
       int pos = remaining++;
-      future.then((Object value) {
+      future.then((E value) {
         remaining--;
         if (values != null) {
           values[pos] = value;
@@ -310,9 +310,9 @@ abstract class Future<T> {
       }, onError: handleError);
     }
     if (remaining == 0) {
-      return new Future.value(const []);
+      return new Future<E>.value(const []);
     }
-    values = new List(remaining);
+    values = new List<E>(remaining);
     return result;
   }
 
@@ -329,11 +329,13 @@ abstract class Future<T> {
    * If [f] returns a non-[Future], iteration continues immediately. Otherwise
    * it waits for the returned [Future] to complete.
    */
-  static Future forEach(Iterable input, f(element)) {
-    Iterator iterator = input.iterator;
+  // Alternatively we could drop the "E", since it's not used anyways:
+  // static Future<Null> forEach<T>(Iterable<T> input, f(T element)) {
+  static Future<Null> forEach<E, T>(Iterable<T> input, /*E | Future<E>*/ f(T element)) {
+    Iterator<T> iterator = input.iterator;
     return doWhile(() {
       if (!iterator.moveNext()) return false;
-      return new Future.sync(() => f(iterator.current)).then((_) => true);
+      return new Future<E>.sync(() => f(iterator.current)).then((E _) => true);
     });
   }
 
@@ -351,7 +353,7 @@ abstract class Future<T> {
    * a [bool]. If it returns a non-[Future], iteration continues immediately.
    * Otherwise it waits for the returned [Future] to complete.
    */
-  static Future doWhile(f()) {
+  static Future<Null> doWhile(f()) {
     _Future doneSignal = new _Future();
     var nextIteration;
     // Bind this callback explicitly so that each iteration isn't bound in the
@@ -407,7 +409,7 @@ abstract class Future<T> {
    * with a `test` parameter, instead of handling both value and error in a
    * single [then] call.
    */
-  Future then(onValue(T value), { Function onError });
+  Future<E> then<E>(/*E | Future<E>*/ onValue(T value), { Function onError });
 
   /**
    * Handles errors emitted by this [Future].
@@ -461,8 +463,8 @@ abstract class Future<T> {
    *     }
    *
    */
-  Future catchError(Function onError,
-                    {bool test(Object error)});
+  Future<E> catchError<E>(Function onError,
+                          {bool test(Object error)});
 
   /**
    * Register a function to be called when this future completes.
@@ -525,7 +527,7 @@ abstract class Future<T> {
    * If `onTimeout` is omitted, a timeout will cause the returned future to
    * complete with a [TimeoutException].
    */
-  Future timeout(Duration timeLimit, {onTimeout()});
+  Future<T> timeout(Duration timeLimit, {/*T | Future<T>*/ onTimeout()});
 }
 
 /**
