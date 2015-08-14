@@ -784,8 +784,8 @@ class _DoneStreamSubscription<T> implements StreamSubscription<T> {
 
   Future cancel() => null;
 
-  Future asFuture([futureValue]) {
-    _Future result = new _Future();
+  Future<E> asFuture<E>([/*E | Future<E>*/futureValue]) {
+    _Future result = new _Future<E>();
     _onDone = () { result._completeWithValue(null); };
     return result;
   }
