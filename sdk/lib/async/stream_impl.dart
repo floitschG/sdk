@@ -202,8 +202,8 @@ class _BufferingStreamSubscription<T> implements StreamSubscription<T>,
     return _cancelFuture;
   }
 
-  Future asFuture([var futureValue]) {
-    _Future<T> result = new _Future<T>();
+  Future<E> asFuture<E>([/*E | Future<E>*/ futureValue]) {
+    _Future<E> result = new _Future<E>();
 
     // Overwrite the onDone and onError handlers.
     _onDone = () { result._complete(futureValue); };

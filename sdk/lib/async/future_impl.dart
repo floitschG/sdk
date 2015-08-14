@@ -14,7 +14,7 @@ typedef _FutureAction();
 abstract class _Completer<T> implements Completer<T> {
   final _Future<T> future = new _Future<T>();
 
-  void complete([value]);
+  void complete([/*T | Future<T>*/ value]);
 
   void completeError(Object error, [StackTrace stackTrace]) {
     error = _nonNullError(error);
@@ -36,7 +36,7 @@ abstract class _Completer<T> implements Completer<T> {
 
 class _AsyncCompleter<T> extends _Completer<T> {
 
-  void complete([value]) {
+  void complete([/*T | Future<T>*/ value]) {
     if (!future._mayComplete) throw new StateError("Future already completed");
     future._asyncComplete(value);
   }
@@ -47,7 +47,7 @@ class _AsyncCompleter<T> extends _Completer<T> {
 }
 
 class _SyncCompleter<T> extends _Completer<T> {
-  void complete([value]) {
+  void complete([/*T | Future<T>*/ value]) {
     if (!future._mayComplete) throw new StateError("Future already completed");
     future._complete(value);
   }
@@ -202,8 +202,8 @@ class _Future<T> implements Future<T> {
     }
   }
 
-  Future then(f(T value), { Function onError }) {
-    _Future result = new _Future();
+  Future<E> then<E>(/*E | Future<E>*/ f(T value), { Function onError }) {
+    _Future result = new _Future<E>();
     if (!identical(result._zone, _ROOT_ZONE)) {
       f = result._zone.registerUnaryCallback(f);
       if (onError != null) {
@@ -214,8 +214,8 @@ class _Future<T> implements Future<T> {
     return result;
   }
 
-  Future catchError(Function onError, { bool test(error) }) {
-    _Future result = new _Future();
+  Future<E> catchError<E>(Function onError, { bool test(error) }) {
+    _Future result = new _Future<E>();
     if (!identical(result._zone, _ROOT_ZONE)) {
       onError = _registerErrorHandler(onError, result._zone);
       if (test != null) test = result._zone.registerUnaryCallback(test);

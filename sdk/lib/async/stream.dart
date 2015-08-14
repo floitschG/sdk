@@ -311,8 +311,8 @@ abstract class Stream<T> {
    * If a broadcast stream is listened to more than once, each subscription
    * will individually execute `map` for each event.
    */
-  Stream map(convert(T event)) {
-    return new _MapStream<T, dynamic>(this, convert);
+  Stream<E> map<E>(E convert(T event)) {
+    return new _MapStream<T, E>(this, convert);
   }
 
   /**
@@ -325,7 +325,7 @@ abstract class Stream<T> {
    *
    * The returned stream is a broadcast stream if this stream is.
    */
-  Stream asyncMap(convert(T event)) {
+  Stream<E> asyncMap(/*E | Future<E>*/ convert(T event)) {
     StreamController controller;
     StreamSubscription subscription;
     void onListen () {
@@ -356,13 +356,13 @@ abstract class Stream<T> {
       );
     }
     if (this.isBroadcast) {
-      controller = new StreamController.broadcast(
+      controller = new StreamController<E>.broadcast(
         onListen: onListen,
         onCancel: () { subscription.cancel(); },
         sync: true
       );
     } else {
-      controller = new StreamController(
+      controller = new StreamController<E>(
         onListen: onListen,
         onPause: () { subscription.pause(); },
         onResume: () { subscription.resume(); },
@@ -386,7 +386,7 @@ abstract class Stream<T> {
    *
    * The returned stream is a broadcast stream if this stream is.
    */
-  Stream asyncExpand(Stream convert(T event)) {
+  Stream<E> asyncExpand(Stream<E> convert(T event)) {
     StreamController controller;
     StreamSubscription subscription;
     void onListen() {
@@ -413,13 +413,13 @@ abstract class Stream<T> {
       );
     }
     if (this.isBroadcast) {
-      controller = new StreamController.broadcast(
+      controller = new StreamController<E>.broadcast(
         onListen: onListen,
         onCancel: () { subscription.cancel(); },
         sync: true
       );
     } else {
-      controller = new StreamController(
+      controller = new StreamController<E>(
         onListen: onListen,
         onPause: () { subscription.pause(); },
         onResume: () { subscription.resume(); },
@@ -473,8 +473,8 @@ abstract class Stream<T> {
    * If a broadcast stream is listened to more than once, each subscription
    * will individually call `convert` and expand the events.
    */
-  Stream expand(Iterable convert(T value)) {
-    return new _ExpandStream<T, dynamic>(this, convert);
+  Stream<E> expand<E>(Iterable<E> convert(T value)) {
+    return new _ExpandStream<T, E>(this, convert);
   }
 
   /**
@@ -495,7 +495,7 @@ abstract class Stream<T> {
    * In that case the returned future completes with the error from calling
    * `addStream`.
    */
-  Future pipe(StreamConsumer<T> streamConsumer) {
+  Future<Null> pipe(StreamConsumer<T> streamConsumer) {
     return streamConsumer.addStream(this).then((_) => streamConsumer.close());
   }
 
@@ -507,7 +507,7 @@ abstract class Stream<T> {
    * The `streamTransformer` can decide whether it wants to return a
    * broadcast stream or not.
    */
-  Stream transform(StreamTransformer<T, dynamic> streamTransformer) {
+  Stream<E> transform<E>(StreamTransformer<T, E> streamTransformer) {
     return streamTransformer.bind(this);
   }
 
@@ -548,8 +548,8 @@ abstract class Stream<T> {
   }
 
   /** Reduces a sequence of values by repeatedly applying [combine]. */
-  Future fold(var initialValue, combine(var previous, T element)) {
-    _Future result = new _Future();
+  Future<E> fold<E>(E initialValue, E combine(E previous, T element)) {
+    _Future result = new _Future<E>();
     var value = initialValue;
     StreamSubscription subscription;
     subscription = this.listen(
@@ -643,7 +643,7 @@ abstract class Stream<T> {
    * have been processed. Completes the future with an error if the
    * stream has an error event, or if [action] throws.
    */
-  Future forEach(void action(T element)) {
+  Future<Null> forEach(void action(T element)) {
     _Future future = new _Future();
     StreamSubscription subscription;
     subscription = this.listen(
@@ -818,7 +818,7 @@ abstract class Stream<T> {
    * In case of a `done` event the future completes with the given
    * [futureValue].
    */
-  Future drain([var futureValue]) => listen(null, cancelOnError: true)
+  Future<E> drain<E>([/*E | Future<E>*/ futureValue]) => listen(null, cancelOnError: true)
       .asFuture(futureValue);
 
   /**
@@ -1046,6 +1046,8 @@ abstract class Stream<T> {
    * with no [defaultValue] function provided, the future will receive an
    * error.
    */
+  // Why is this not a Future<T>??
+  // Is it really that important that defaultValue can return a different type?
   Future<dynamic> firstWhere(bool test(T element), {Object defaultValue()}) {
     _Future<dynamic> future = new _Future();
     StreamSubscription subscription;
@@ -1230,7 +1232,7 @@ abstract class Stream<T> {
    * will have its individually timer that starts counting on listen,
    * and the subscriptions' timers can be paused individually.
    */
-  Stream timeout(Duration timeLimit, {void onTimeout(EventSink sink)}) {
+  Stream<T> timeout(Duration timeLimit, {void onTimeout(EventSink<T> sink)}) {
     StreamController controller;
     // The following variables are set on listen.
     StreamSubscription<T> subscription;
@@ -1287,8 +1289,8 @@ abstract class Stream<T> {
       return result;
     }
     controller = isBroadcast
-        ? new _SyncBroadcastStreamController(onListen, onCancel)
-        : new _SyncStreamController(
+        ? new _SyncBroadcastStreamController<T>(onListen, onCancel)
+        : new _SyncStreamController<T>(
               onListen,
               () {
                 // Don't null the timer, onCancel may call cancel again.
@@ -1332,7 +1334,7 @@ abstract class StreamSubscription<T> {
    *
    * Returns `null` if there is no need to wait.
    */
-  Future cancel();
+  Future<Null> cancel();
 
   /**
    * Set or override the data event handler of this subscription.
@@ -1407,7 +1409,9 @@ abstract class StreamSubscription<T> {
    * In case of a `done` event the future completes with the given
    * [futureValue].
    */
-  Future asFuture([var futureValue]);
+  // We should consider only allowing "E" here, since it's not clear when
+  // the futureValue is used.
+  Future<E> asFuture<E>([/*E | Future<E>*/ futureValue]);
 }
 
 
@@ -1482,7 +1486,7 @@ abstract class StreamConsumer<S> {
    * from continuing, it may report this error in the returned future,
    * otherwise it will just complete the future with `null`.
    */
-  Future addStream(Stream<S> stream);
+  Future<Null> addStream(Stream<S> stream);
 
   /**
    * Tells the consumer that no futher streams will be added.
@@ -1494,7 +1498,7 @@ abstract class StreamConsumer<S> {
    * If cleaning up can fail, the error may be reported in the returned future,
    * otherwise it completes with `null`.
    */
-  Future close();
+  Future<Null> close();
 }
 
 

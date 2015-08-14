@@ -685,7 +685,7 @@ abstract class Completer<T> {
    *
    * All listeners on the future are informed about the value.
    */
-  void complete([value]);
+  void complete([/*T | Future<T>*/ value]);
 
   /**
    * Complete [future] with an error.
