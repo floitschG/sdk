@@ -525,7 +525,7 @@ abstract class Future<T> {
    * If `onTimeout` is omitted, a timeout will cause the returned future to
    * complete with a [TimeoutException].
    */
-  Future timeout(Duration timeLimit, {onTimeout()});
+  Future<T> timeout(Duration timeLimit, {onTimeout()});
 }
 
 /**
