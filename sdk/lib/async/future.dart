@@ -111,7 +111,7 @@ abstract class Future<T> {
    * If a non-future value is returned, the returned future is completed
    * with that value.
    */
-  factory Future(computation()) {
+  factory Future(/*T | Future<T>*/ computation()) {
     _Future result = new _Future<T>();
     Timer.run(() {
       try {
@@ -137,7 +137,7 @@ abstract class Future<T> {
    * If calling [computation] returns a non-future value,
    * the returned future is completed with that value.
    */
-  factory Future.microtask(computation()) {
+  factory Future.microtask(/*T | Future<T>*/ computation()) {
     _Future result = new _Future<T>();
     scheduleMicrotask(() {
       try {
@@ -163,7 +163,7 @@ abstract class Future<T> {
    * If calling [computation] returns a non-future value,
    * the returned future is completed with that value.
    */
-  factory Future.sync(computation()) {
+  factory Future.sync(/*T | Future<T>*/ computation()) {
     try {
       var result = computation();
       return new Future<T>.value(result);
@@ -180,7 +180,7 @@ abstract class Future<T> {
    *
    * Use [Completer] to create a Future and complete it later.
    */
-  factory Future.value([value]) {
+  factory Future.value([/*T | Future<T>*/ value]) {
     return new _Future<T>.immediate(value);
   }
 

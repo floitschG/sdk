@@ -538,5 +538,5 @@ class _DoneSubscription<T> implements StreamSubscription<T> {
   }
   Future cancel() { return new _Future.immediate(null); }
   bool get isPaused => _pauseCount > 0;
-  Future asFuture([Object value]) => new _Future();
+  Future asFuture<E>([E value]) => new _Future<E>();
 }
