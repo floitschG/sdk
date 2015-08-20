@@ -168,7 +168,7 @@ class HtmlEscape extends Converter<String, String> {
   const HtmlEscape([this.mode = HtmlEscapeMode.UNKNOWN]);
 
   String convert(String text) {
-    var val = _convert(text, 0, text.length);
+    String val = _convert(text, 0, text.length);
     return val == null ? text : val;
   }
 

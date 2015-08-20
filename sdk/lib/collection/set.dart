@@ -120,8 +120,8 @@ abstract class SetMixin<E> implements Set<E> {
     return result;
   }
 
-  Iterable map(f(E element)) =>
-      new EfficientLengthMappedIterable<E, dynamic>(this, f);
+  Iterable<T> map<T>(T f(E element)) =>
+      new EfficientLengthMappedIterable<E, T>(this, f);
 
   E get single {
     if (length > 1) throw IterableElementError.tooMany();
@@ -157,9 +157,8 @@ abstract class SetMixin<E> implements Set<E> {
     return value;
   }
 
-  dynamic fold(var initialValue,
-               dynamic combine(var previousValue, E element)) {
-    var value = initialValue;
+  T fold<T>(T initialValue, T combine(T previousValue, E element)) {
+    T value = initialValue;
     for (E element in this) value = combine(value, element);
     return value;
   }
