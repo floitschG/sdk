@@ -86,9 +86,9 @@ abstract class ZoneSpecification {
                       f(arg1, arg2), arg1, arg2),
     ZoneCallback<E> registerCallback<E>(
         Zone self, ZoneDelegate parent, Zone zone, E f()),
-    ZoneUnaryCallback<E, E2> registerUnaryCallback(
+    ZoneUnaryCallback<E, E2> registerUnaryCallback<E, E2>(
         Zone self, ZoneDelegate parent, Zone zone, E f(E2 arg)),
-    ZoneBinaryCallback<E, E2, E3> registerBinaryCallback(
+    ZoneBinaryCallback<E, E2, E3> registerBinaryCallback<E, E2, E3>(
         Zone self, ZoneDelegate parent, Zone zone, E f(E2 arg1, E3 arg2)),
     AsyncError errorCallback(Zone self, ZoneDelegate parent, Zone zone,
                              Object error, StackTrace stackTrace),
@@ -370,7 +370,7 @@ abstract class Zone {
    *
    * Similar to [registerCallback] but with a unary callback.
    */
-  ZoneBinaryCallback<E, E2, E3> registerBinaryCallback(E callback(E2 arg1, E3 arg2));
+  ZoneBinaryCallback<E, E2, E3> registerBinaryCallback<E, E2, E3>(E callback(E2 arg1, E3 arg2));
 
   /**
    *  Equivalent to:
