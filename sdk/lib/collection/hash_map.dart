@@ -122,7 +122,7 @@ abstract class HashMap<K, V> implements Map<K, V> {
   factory HashMap.fromIterable(Iterable iterable,
       {K key(element), V value(element)}) {
     HashMap<K, V> map = new HashMap<K, V>();
-    Maps._fillMapWithMappedIterable(map, iterable, key, value);
+    Maps._fillMapWithMappedIterable<K, V>(map, iterable, key, value);
     return map;
   }
 
@@ -139,7 +139,7 @@ abstract class HashMap<K, V> implements Map<K, V> {
    */
   factory HashMap.fromIterables(Iterable<K> keys, Iterable<V> values) {
     HashMap<K, V> map = new HashMap<K, V>();
-    Maps._fillMapWithIterables(map, keys, values);
+    Maps._fillMapWithIterables<K, V>(map, keys, values);
     return map;
   }
 }
