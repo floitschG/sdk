@@ -156,7 +156,7 @@ abstract class Iterable<E> {
    * on any element where the result isn't needed.
    * For example, [elementAt] may call `f` only once.
    */
-  Iterable map(f(E element)) => new MappedIterable<E, dynamic>(this, f);
+  Iterable<T> map<T>(T f(E element)) => new MappedIterable<E, T>(this, f);
 
   /**
    * Returns a new lazy [Iterable] with all elements that satisfy the
@@ -171,6 +171,8 @@ abstract class Iterable<E> {
    * multiple times over the returned [Iterable] will invoke the supplied
    * function [test] multiple times on the same element.
    */
+  // Could be nice to have a default generic type that can be overriden:
+  // Iterable<T> where<T = E>(bool f(E element)) => new WhereIterable<T, E>(this, f);
   Iterable<E> where(bool f(E element)) => new WhereIterable<E>(this, f);
 
   /**
@@ -182,8 +184,8 @@ abstract class Iterable<E> {
    * The returned [Iterable] is lazy, and calls [f] for each element
    * of this every time it's iterated.
    */
-  Iterable expand(Iterable f(E element)) =>
-      new ExpandIterable<E, dynamic>(this, f);
+  Iterable<T> expand<T>(Iterable<T> f(E element)) =>
+      new ExpandIterable<E, T>(this, f);
 
   /**
    * Returns true if the collection contains an element equal to [element].
@@ -270,8 +272,8 @@ abstract class Iterable<E> {
    *     iterable.fold(0, (prev, element) => prev + element);
    *
    */
-  dynamic fold(var initialValue,
-               dynamic combine(var previousValue, E element)) {
+  T fold<T>(T initialValue,
+            T combine(T previousValue, E element)) {
     var value = initialValue;
     for (E element in this) value = combine(value, element);
     return value;
@@ -501,6 +503,8 @@ abstract class Iterable<E> {
    * function is returned.
    * If [orElse] is omitted, it defaults to throwing a [StateError].
    */
+  // Same comment as for 'where'.
+  // T firstWhere<T = E>(bool test(E element), { T orElse() }) {
   E firstWhere(bool test(E element), { E orElse() }) {
     for (E element in this) {
       if (test(element)) return element;
@@ -523,6 +527,8 @@ abstract class Iterable<E> {
    * function is returned.
    * If [orElse] is omitted, it defaults to throwing a [StateError].
    */
+  // Same comment as for 'where'.
+  // T lastWhere<T = E>(bool test(E element), { T orElse() }) {
   E lastWhere(bool test(E element), {E orElse()}) {
     E result = null;
     bool foundMatching = false;
@@ -545,6 +551,8 @@ abstract class Iterable<E> {
    * Otherwise, if there are no matching elements, or if there is more than
    * one matching element, a [StateError] is thrown.
    */
+  // Same comment as for 'where'.
+  // T singleWhere<T = E>(bool test(E element)) {
   E singleWhere(bool test(E element)) {
     E result = null;
     bool foundMatching = false;

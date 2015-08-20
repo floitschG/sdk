@@ -17,8 +17,6 @@ abstract class IterableMixin<E> implements Iterable<E> {
 
   Iterable map<T>(f(E element)) => new MappedIterable<E, T>(this, f);
 
-  // Would be nice to have a default generic type that can be overriden:
-  // Iterable<T> where<T = E>(bool f(E element)) => new WhereIterable<T, E>(this, f);
   Iterable<E> where(bool f(E element)) => new WhereIterable<E>(this, f);
 
   Iterable<T> expand<T>(Iterable<T> f(E element)) =>
@@ -149,8 +147,6 @@ abstract class IterableMixin<E> implements Iterable<E> {
     return result;
   }
 
-  // Same as for 'where'.
-  // T firstWhere<T = E>(bool test(E value), { T orElse() }) {
   E firstWhere(bool test(E value), { E orElse() }) {
     for (E element in this) {
       if (test(element)) return element;
@@ -159,8 +155,6 @@ abstract class IterableMixin<E> implements Iterable<E> {
     throw IterableElementError.noElement();
   }
 
-  // Same as for 'where'.
-  // T lastWhere<T = E>(bool test(E value), { T orElse() }) {
   E lastWhere(bool test(E value), { E orElse() }) {
     E result = null;
     bool foundMatching = false;
@@ -175,8 +169,6 @@ abstract class IterableMixin<E> implements Iterable<E> {
     throw IterableElementError.noElement();
   }
 
-  // Same as for 'where'.
-  // T singleWhere<T = E>(bool test(E value)) {
   E singleWhere(bool test(E value)) {
     E result = null;
     bool foundMatching = false;
