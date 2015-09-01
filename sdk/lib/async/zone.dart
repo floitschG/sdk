@@ -523,21 +523,21 @@ class _ZoneDelegate implements ZoneDelegate {
     _ZoneFunction implementation = _delegationTarget._registerCallback;
     _Zone implZone = implementation.zone;
     RegisterCallbackHandler handler = implementation.function;
-    return handler(implZone, _parentDelegate(implZone), zone, f);
+    return handler<E>(implZone, _parentDelegate(implZone), zone, f);
   }
 
-  ZoneUnaryCallback registerUnaryCallback(Zone zone, f(arg)) {
+  ZoneUnaryCallback<E, E2> registerUnaryCallback<E, E2>(Zone zone, E f(E2 arg)) {
     _ZoneFunction implementation = _delegationTarget._registerUnaryCallback;
     _Zone implZone = implementation.zone;
     RegisterUnaryCallbackHandler handler = implementation.function;
-    return handler(implZone, _parentDelegate(implZone), zone, f);
+    return handler<E, E2>(implZone, _parentDelegate(implZone), zone, f);
   }
 
-  ZoneBinaryCallback registerBinaryCallback(Zone zone, f(arg1, arg2)) {
+  ZoneBinaryCallback<E, E2, E3> registerBinaryCallback(Zone zone, E f(E2 arg1, E3 arg2)) {
     _ZoneFunction implementation = _delegationTarget._registerBinaryCallback;
     _Zone implZone = implementation.zone;
     RegisterBinaryCallbackHandler handler = implementation.function;
-    return handler(implZone, _parentDelegate(implZone), zone, f);
+    return handler<E, E2, E3>(implZone, _parentDelegate(implZone), zone, f);
   }
 
   AsyncError errorCallback(Zone zone, Object error, StackTrace stackTrace) {
@@ -728,8 +728,8 @@ class _CustomZone extends _Zone {
     }
   }
 
-  ZoneCallback bindCallback(f(), { bool runGuarded: true }) {
-    ZoneCallback registered = registerCallback(f);
+  ZoneCallback<E> bindCallback<E>(E f(), { bool runGuarded: true }) {
+    ZoneCallback registered = registerCallback<E>(f);
     if (runGuarded) {
       return () => this.runGuarded(registered);
     } else {
@@ -1172,11 +1172,11 @@ class _RootZone extends _Zone {
     return _rootRunBinary(null, null, this, f, arg1, arg2);
   }
 
-  ZoneCallback registerCallback(f()) => f;
+  ZoneCallback<E> registerCallback<E>(E f()) => f;
 
-  ZoneUnaryCallback registerUnaryCallback(f(arg)) => f;
+  ZoneUnaryCallback<E, E2> registerUnaryCallback<E, E2>(E f(E2 arg)) => f;
 
-  ZoneBinaryCallback registerBinaryCallback(f(arg1, arg2)) => f;
+  ZoneBinaryCallback<E, E2, E3> registerBinaryCallback<E, E2, E3>(E f(E2 arg1, E3 arg2)) => f;
 
   AsyncError errorCallback(Object error, StackTrace stackTrace) => null;
 
