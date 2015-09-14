@@ -6,6 +6,7 @@
 
 import argparse
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -26,6 +27,25 @@ IGNORE_PATTERNS = shutil.ignore_patterns(
 
 usage = """obs_tool.py [options]"""
 
+def GetDartSdkPubExecutablePath():
+  osdict = {'Darwin':'mac', 'Linux':'linux', 'Windows':'win'}
+  system = platform.system()
+  executable_name = 'pub'
+  if system == 'Windows':
+    executable_name = 'pub.bat'
+  try:
+    osname = osdict[system]
+  except KeyError:
+    print >>sys.stderr, ('WARNING: platform "%s" not supported') % (system)
+    return None;
+  return os.path.join(DART_ROOT,
+                      'tools',
+                      'sdks',
+                      osname,
+                      'dart-sdk',
+                      'bin',
+                      executable_name)
+
 def BuildArguments():
   result = argparse.ArgumentParser(usage=usage)
   result.add_argument("--package-root", help="package root", default=None)
@@ -34,6 +54,7 @@ def BuildArguments():
   result.add_argument("--directory", help="observatory root", default=None)
   result.add_argument("--command", help="[get, build, deploy]", default=None)
   result.add_argument("--silent", help="silence all output", default=False)
+  result.add_argument("--sdk", help="Use prebuilt sdk", default=False)
   return result
 
 def ProcessOptions(options, args):
@@ -42,6 +63,10 @@ def ProcessOptions(options, args):
     return False
   # If we have a pub executable, we are running from the dart-sdk.
   if (options.pub_executable != None):
+    return True
+  if (options.sdk != None):
+    # Use the checked in pub executable by default.
+    options.pub_executable = GetDartSdkPubExecutablePath()
     return True
   # Otherwise, we need a dart executable and a package root.
   return ((options.package_root != None) and
@@ -96,6 +121,8 @@ def PubBuild(dart_executable, pub_executable, pkg_root, silent, output_dir):
 def Deploy(input_dir, output_dir):
   shutil.rmtree(output_dir)
   shutil.copytree(input_dir, output_dir, ignore=IGNORE_PATTERNS)
+  index_file = os.path.join(output_dir, 'web', 'index.html')
+  os.utime(index_file, None)
   return 0
 
 def RewritePubSpec(input_path, output_path, search, replace):

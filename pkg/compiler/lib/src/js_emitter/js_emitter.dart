@@ -6,6 +6,9 @@ library dart2js.js_emitter;
 
 import '../common.dart';
 
+import '../common/names.dart' show
+    Identifiers;
+
 import '../constants/values.dart';
 
 import '../closure.dart' show
@@ -58,7 +61,7 @@ import 'lazy_emitter/emitter.dart' as lazy_js_emitter;
 import 'startup_emitter/emitter.dart' as startup_js_emitter;
 
 import '../universe/universe.dart' show
-    TypeMaskSet,
+    ReceiverMaskSet,
     TypedSelector;
 
 import '../util/util.dart' show

@@ -16,6 +16,10 @@ import '../common/backend_api.dart' show
 import '../common/codegen.dart' show
     CodegenRegistry,
     CodegenWorkItem;
+import '../common/names.dart' show
+    Identifiers,
+    Selectors,
+    Uris;
 import '../common/registry.dart' show
     Registry;
 import '../common/tasks.dart' show
@@ -25,8 +29,7 @@ import '../common/resolution.dart' show
 import '../common/work.dart' show
     ItemCompilationContext;
 import '../compiler.dart' show
-    Compiler,
-    isPrivateName;
+    Compiler;
 import '../compile_time_constants.dart';
 import '../constants/constant_system.dart';
 import '../constants/expressions.dart';
@@ -69,8 +72,9 @@ import '../js_emitter/js_emitter.dart' show
     USE_LAZY_EMITTER;
 import '../library_loader.dart' show LibraryLoader, LoadedLibraries;
 import '../native/native.dart' as native;
-import '../resolution/resolution.dart' show
-    ResolutionRegistry,
+import '../resolution/registry.dart' show
+    ResolutionRegistry;
+import '../resolution/tree_elements.dart' show
     TreeElements;
 import '../ssa/ssa.dart';
 import '../tree/tree.dart';
@@ -84,6 +88,7 @@ import '../world.dart' show
 import 'codegen/task.dart';
 import 'constant_system_javascript.dart';
 import 'patch_resolver.dart';
+import 'lookup_map_analysis.dart' show LookupMapAnalysis;
 
 part 'backend.dart';
 part 'checked_mode_helpers.dart';

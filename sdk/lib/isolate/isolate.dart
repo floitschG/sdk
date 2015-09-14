@@ -157,9 +157,6 @@ class Isolate {
    * isolate was started as [paused], it may already have terminated
    * before those methods can complete.
    *
-   * WARNING: The [errorsAreFatal], [onExit] and [onError] parameters are not
-   * implemented yet.
-   *
    * Returns a future that will complete with an [Isolate] instance if the
    * spawning succeeded. It will complete with an error otherwise.
    */
@@ -202,9 +199,6 @@ class Isolate {
    * isolate was started as [paused], it may already have terminated
    * before those methods can complete.
    *
-   * WARNING: The [errorsAreFatal], [onExit] and [onError] parameters are not
-   * implemented yet.
-   *
    * If the [checked] parameter is set to `true` or `false`,
    * the new isolate will run code in checked mode,
    * respectively in production mode, if possible.
@@ -218,20 +212,30 @@ class Isolate {
    *
    * WARNING: The [checked] parameter is not implemented on all platforms yet.
    *
-   * If the [packageRoot] parameter is provided, it is used to find the location
-   * of packages imports in the spawned isolate.
+   * If either the [packageRoot] or the [packages] parameter is provided,
+   * it is used to find the location of package sources in the spawned isolate.
+   *
    * The `packageRoot` URI must be a "file" or "http"/"https" URI that specifies
    * a directory. If it doesn't end in a slash, one will be added before
    * using the URI, and any query or fragment parts are ignored.
-   * Package imports (like "package:foo/bar.dart") in the new isolate are
+   * Package imports (like `"package:foo/bar.dart"`) in the new isolate are
    * resolved against this location, as by
    * `packageRoot.resolve("foo/bar.dart")`.
-   * This includes the main entry [uri] if it happens to be a package-URL.
-   * If [packageRoot] is omitted, it defaults to the same URI that
-   * the current isolate is using.
    *
-   * WARNING: The [packageRoot] parameter is not implemented on all
-   * platforms yet.
+   * The `packages` map maps package names to URIs with the same requirements
+   * as `packageRoot`. Package imports (like `"package:foo/bar/baz.dart"`) in
+   * the new isolate are resolved against the URI for that package (if any),
+   * as by `packages["foo"].resolve("bar/baz.dart")
+   *
+   * This resolution also applies to the main entry [uri]
+   * if that happens to be a package-URI.
+   *
+   * If both [packageRoot] and [packages] are omitted, the new isolate uses
+   * the same package resolution as the current isolate.
+   * It's not allowed to provide both a `packageRoot` and a `package` parameter.
+   *
+   * WARNING: The [packageRoot] and [packages] parameters are not implemented
+   * on all platforms yet.
    *
    * Returns a future that will complete with an [Isolate] instance if the
    * spawning succeeded. It will complete with an error otherwise.
@@ -243,6 +247,7 @@ class Isolate {
       {bool paused: false,
        bool checked,
        Uri packageRoot,
+       Map<String, Uri> packages,
        bool errorsAreFatal,
        SendPort onExit,
        SendPort onError});
@@ -491,6 +496,10 @@ abstract class SendPort implements Capability {
    * is also possible to send object instances (which would be copied in the
    * process). This is currently only supported by the dartvm.  For now, the
    * dart2js compiler only supports the restricted messages described above.
+   *
+   * The send happens immediately and doesn't block.  The corresponding receive
+   * port can receive the message as soon as its isolate's event loop is ready
+   * to deliver it, independently of what the sending isolate is doing.
    */
   void send(var message);
 

@@ -2,9 +2,6 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-// This code was auto-generated, is not intended to be edited, and is subject to
-// significant change. Please see the README file for more information.
-
 library engine;
 
 import 'dart:async';
@@ -556,6 +553,13 @@ abstract class AnalysisContext {
       Source source, Source librarySource);
 
   /**
+   * Perform work until the given [result] has been computed for the given
+   * [target]. Return the computed value.
+   */
+  Object /*V*/ computeResult(
+      AnalysisTarget target, ResultDescriptor /*<V>*/ result);
+
+  /**
    * Notifies the context that the client is going to stop using this context.
    */
   void dispose();
@@ -719,6 +723,15 @@ abstract class AnalysisContext {
    */
   @deprecated
   ht.HtmlUnit getResolvedHtmlUnit(Source htmlSource);
+
+  /**
+   * Return the value of the given [result] for the given [target].
+   *
+   * If the corresponding [target] does not exist, or the [result] is not
+   * computed yet, then the default value is returned.
+   */
+  Object /*V*/ getResult(
+      AnalysisTarget target, ResultDescriptor /*<V>*/ result);
 
   /**
    * Return a list of the sources being analyzed in this context whose full path
@@ -1092,7 +1105,8 @@ class AnalysisContextImpl implements InternalAnalysisContext {
    */
   AnalysisContextImpl() {
     _resultRecorder = new AnalysisContextImpl_AnalysisTaskResultRecorder(this);
-    _privatePartition = new UniversalCachePartition(this,
+    _privatePartition = new UniversalCachePartition(
+        this,
         AnalysisOptionsImpl.DEFAULT_CACHE_SIZE,
         new AnalysisContextImpl_ContextRetentionPolicy(this));
     _cache = createCacheFromSourceFactory(null);
@@ -1118,6 +1132,7 @@ class AnalysisContextImpl implements InternalAnalysisContext {
         this._options.dart2jsHint != options.dart2jsHint ||
         (this._options.hint && !options.hint) ||
         this._options.preserveComments != options.preserveComments ||
+        this._options.strongMode != options.strongMode ||
         this._options.enableStrictCallChecks !=
             options.enableStrictCallChecks ||
         this._options.enableSuperMixins != options.enableSuperMixins;
@@ -1153,6 +1168,7 @@ class AnalysisContextImpl implements InternalAnalysisContext {
     this._options.incrementalValidation = options.incrementalValidation;
     this._options.lint = options.lint;
     this._options.preserveComments = options.preserveComments;
+    this._options.strongMode = options.strongMode;
     _generateImplicitErrors = options.generateImplicitErrors;
     _generateSdkErrors = options.generateSdkErrors;
     if (needsRecompute) {
@@ -1651,11 +1667,15 @@ class AnalysisContextImpl implements InternalAnalysisContext {
             _getDartParseData(source, dartEntry, DartEntry.PARSE_ERRORS));
         dartEntry = _getReadableDartEntry(source);
         if (dartEntry.getValue(DartEntry.SOURCE_KIND) == SourceKind.LIBRARY) {
-          ListUtilities.addAll(errors, _getDartResolutionData(
-              source, source, dartEntry, DartEntry.RESOLUTION_ERRORS));
+          ListUtilities.addAll(
+              errors,
+              _getDartResolutionData(
+                  source, source, dartEntry, DartEntry.RESOLUTION_ERRORS));
           dartEntry = _getReadableDartEntry(source);
-          ListUtilities.addAll(errors, _getDartVerificationData(
-              source, source, dartEntry, DartEntry.VERIFICATION_ERRORS));
+          ListUtilities.addAll(
+              errors,
+              _getDartVerificationData(
+                  source, source, dartEntry, DartEntry.VERIFICATION_ERRORS));
           if (enableHints) {
             dartEntry = _getReadableDartEntry(source);
             ListUtilities.addAll(errors,
@@ -1669,20 +1689,28 @@ class AnalysisContextImpl implements InternalAnalysisContext {
         } else {
           List<Source> libraries = getLibrariesContaining(source);
           for (Source librarySource in libraries) {
-            ListUtilities.addAll(errors, _getDartResolutionData(
-                source, librarySource, dartEntry, DartEntry.RESOLUTION_ERRORS));
+            ListUtilities.addAll(
+                errors,
+                _getDartResolutionData(source, librarySource, dartEntry,
+                    DartEntry.RESOLUTION_ERRORS));
             dartEntry = _getReadableDartEntry(source);
-            ListUtilities.addAll(errors, _getDartVerificationData(source,
-                librarySource, dartEntry, DartEntry.VERIFICATION_ERRORS));
+            ListUtilities.addAll(
+                errors,
+                _getDartVerificationData(source, librarySource, dartEntry,
+                    DartEntry.VERIFICATION_ERRORS));
             if (enableHints) {
               dartEntry = _getReadableDartEntry(source);
-              ListUtilities.addAll(errors, _getDartHintData(
-                  source, librarySource, dartEntry, DartEntry.HINTS));
+              ListUtilities.addAll(
+                  errors,
+                  _getDartHintData(
+                      source, librarySource, dartEntry, DartEntry.HINTS));
             }
             if (enableLints) {
               dartEntry = _getReadableDartEntry(source);
-              ListUtilities.addAll(errors, _getDartLintData(
-                  source, librarySource, dartEntry, DartEntry.LINTS));
+              ListUtilities.addAll(
+                  errors,
+                  _getDartLintData(
+                      source, librarySource, dartEntry, DartEntry.LINTS));
             }
           }
         }
@@ -1778,8 +1806,8 @@ class AnalysisContextImpl implements InternalAnalysisContext {
   @override
   CancelableFuture<CompilationUnit> computeResolvedCompilationUnitAsync(
       Source unitSource, Source librarySource) {
-    return new _AnalysisFutureHelper<CompilationUnit>(this).computeAsync(
-        unitSource, (SourceEntry sourceEntry) {
+    return new _AnalysisFutureHelper<CompilationUnit>(this)
+        .computeAsync(unitSource, (SourceEntry sourceEntry) {
       if (sourceEntry is DartEntry) {
         if (sourceEntry.getStateInLibrary(
                 DartEntry.RESOLVED_UNIT, librarySource) ==
@@ -1791,6 +1819,11 @@ class AnalysisContextImpl implements InternalAnalysisContext {
       }
       throw new AnalysisNotScheduledError();
     });
+  }
+
+  @override
+  Object computeResult(AnalysisTarget target, ResultDescriptor result) {
+    return result.defaultValue;
   }
 
   /**
@@ -2120,7 +2153,8 @@ class AnalysisContextImpl implements InternalAnalysisContext {
       if (dartEntry == null) {
         AnalysisEngine.instance.logger.logError(
             "Could not compute the public namespace for ${library.source.fullName}",
-            new CaughtException(new AnalysisException(
+            new CaughtException(
+                new AnalysisException(
                     "A Dart file became a non-Dart file: ${source.fullName}"),
                 null));
         return null;
@@ -2167,6 +2201,11 @@ class AnalysisContextImpl implements InternalAnalysisContext {
       return htmlEntry.getValue(HtmlEntry.RESOLVED_UNIT);
     }
     return null;
+  }
+
+  @override
+  Object getResult(AnalysisTarget target, ResultDescriptor result) {
+    return result.defaultValue;
   }
 
   @override
@@ -2315,7 +2354,8 @@ class AnalysisContextImpl implements InternalAnalysisContext {
         _validateLastIncrementalResolutionResult();
         if (_performAnalysisTaskStopwatch != null) {
           AnalysisEngine.instance.instrumentationService.logPerformance(
-              AnalysisPerformanceKind.FULL, _performAnalysisTaskStopwatch,
+              AnalysisPerformanceKind.FULL,
+              _performAnalysisTaskStopwatch,
               'context_id=$_id');
           _performAnalysisTaskStopwatch = null;
         }
@@ -2569,7 +2609,8 @@ class AnalysisContextImpl implements InternalAnalysisContext {
 
   @override
   CompilationUnit resolveCompilationUnit2(
-      Source unitSource, Source librarySource) => _getDartResolutionData2(
+          Source unitSource, Source librarySource) =>
+      _getDartResolutionData2(
           unitSource, librarySource, DartEntry.RESOLVED_UNIT, null);
 
   @override
@@ -2893,7 +2934,9 @@ class AnalysisContextImpl implements InternalAnalysisContext {
       // source continues to change, this loop will eventually terminate.
       //
       dartEntry = _cacheDartScanData(source, dartEntry, DartEntry.TOKEN_STREAM);
-      dartEntry = new ParseDartTask(this, source,
+      dartEntry = new ParseDartTask(
+              this,
+              source,
               dartEntry.getValue(DartEntry.TOKEN_STREAM),
               dartEntry.getValue(SourceEntry.LINE_INFO))
           .perform(_resultRecorder) as DartEntry;
@@ -2957,8 +3000,8 @@ class AnalysisContextImpl implements InternalAnalysisContext {
       //
       try {
         if (dartEntry.getState(SourceEntry.CONTENT) != CacheState.VALID) {
-          dartEntry = new GetContentTask(this, source)
-              .perform(_resultRecorder) as DartEntry;
+          dartEntry = new GetContentTask(this, source).perform(_resultRecorder)
+              as DartEntry;
         }
         dartEntry = new ScanDartTask(
                 this, source, dartEntry.getValue(SourceEntry.CONTENT))
@@ -3034,8 +3077,8 @@ class AnalysisContextImpl implements InternalAnalysisContext {
       //
       try {
         if (htmlEntry.getState(SourceEntry.CONTENT) != CacheState.VALID) {
-          htmlEntry = new GetContentTask(this, source)
-              .perform(_resultRecorder) as HtmlEntry;
+          htmlEntry = new GetContentTask(this, source).perform(_resultRecorder)
+              as HtmlEntry;
         }
         htmlEntry = new ParseHtmlTask(
                 this, source, htmlEntry.getValue(SourceEntry.CONTENT))
@@ -3171,8 +3214,14 @@ class AnalysisContextImpl implements InternalAnalysisContext {
       if (contents != originalContents) {
         if (_options.incremental) {
           _incrementalAnalysisCache = IncrementalAnalysisCache.update(
-              _incrementalAnalysisCache, source, originalContents, contents,
-              offset, oldLength, newLength, _getReadableSourceEntry(source));
+              _incrementalAnalysisCache,
+              source,
+              originalContents,
+              contents,
+              offset,
+              oldLength,
+              newLength,
+              _getReadableSourceEntry(source));
         }
         _sourceChanged(source);
         changed = true;
@@ -3220,11 +3269,12 @@ class AnalysisContextImpl implements InternalAnalysisContext {
     CompilationUnit unit =
         unitEntry.getValueInLibrary(DartEntry.RESOLVED_UNIT, librarySource);
     if (unit == null) {
-      CaughtException exception = new CaughtException(new AnalysisException(
+      CaughtException exception = new CaughtException(
+          new AnalysisException(
               "Entry has VALID state for RESOLVED_UNIT but null value for ${unitSource.fullName} in ${librarySource.fullName}"),
           null);
-      AnalysisEngine.instance.logger.logInformation(
-          exception.toString(), exception);
+      AnalysisEngine.instance.logger
+          .logInformation(exception.toString(), exception);
       unitEntry.recordResolutionError(exception);
       return new AnalysisContextImpl_TaskData(null, false);
     }
@@ -3322,8 +3372,10 @@ class AnalysisContextImpl implements InternalAnalysisContext {
     }
     Token tokenStream = dartEntry.getValue(DartEntry.TOKEN_STREAM);
     dartEntry.setState(DartEntry.TOKEN_STREAM, CacheState.FLUSHED);
-    return new AnalysisContextImpl_TaskData(new ParseDartTask(this, source,
-        tokenStream, dartEntry.getValue(SourceEntry.LINE_INFO)), false);
+    return new AnalysisContextImpl_TaskData(
+        new ParseDartTask(this, source, tokenStream,
+            dartEntry.getValue(SourceEntry.LINE_INFO)),
+        false);
   }
 
   /**
@@ -3356,8 +3408,10 @@ class AnalysisContextImpl implements InternalAnalysisContext {
       if (taskData != null) {
         return taskData;
       }
-      return new AnalysisContextImpl_TaskData(new ResolveDartLibraryCycleTask(
-          this, source, source, builder.librariesInCycle), false);
+      return new AnalysisContextImpl_TaskData(
+          new ResolveDartLibraryCycleTask(
+              this, source, source, builder.librariesInCycle),
+          false);
     } on AnalysisException catch (exception, stackTrace) {
       dartEntry
           .recordResolutionError(new CaughtException(exception, stackTrace));
@@ -3377,9 +3431,10 @@ class AnalysisContextImpl implements InternalAnalysisContext {
     if (htmlEntry.getState(HtmlEntry.PARSED_UNIT) != CacheState.VALID) {
       return _createParseHtmlTask(source, htmlEntry);
     }
-    return new AnalysisContextImpl_TaskData(new ResolveHtmlTask(this, source,
-        htmlEntry.modificationTime,
-        htmlEntry.getValue(HtmlEntry.PARSED_UNIT)), false);
+    return new AnalysisContextImpl_TaskData(
+        new ResolveHtmlTask(this, source, htmlEntry.modificationTime,
+            htmlEntry.getValue(HtmlEntry.PARSED_UNIT)),
+        false);
   }
 
   /**
@@ -3723,8 +3778,11 @@ class AnalysisContextImpl implements InternalAnalysisContext {
    * related to it. Return the task that should be performed, or `null` if there
    * is no more work to be done for the source.
    */
-  AnalysisContextImpl_TaskData _getNextAnalysisTaskForSource(Source source,
-      SourceEntry sourceEntry, bool isPriority, bool hintsEnabled,
+  AnalysisContextImpl_TaskData _getNextAnalysisTaskForSource(
+      Source source,
+      SourceEntry sourceEntry,
+      bool isPriority,
+      bool hintsEnabled,
       bool lintsEnabled) {
     // Refuse to generate tasks for html based files that are above 1500 KB
     if (_isTooBigHtmlSourceEntry(source, sourceEntry)) {
@@ -3914,7 +3972,8 @@ class AnalysisContextImpl implements InternalAnalysisContext {
       DartEntry dartEntry = sourceEntry;
       if (dartEntry.getStateInLibrary(DartEntry.RESOLVED_UNIT, librarySource) ==
           CacheState.VALID) {
-        return new TimestampedData<CompilationUnit>(dartEntry.modificationTime,
+        return new TimestampedData<CompilationUnit>(
+            dartEntry.modificationTime,
             dartEntry.getValueInLibrary(
                 DartEntry.RESOLVED_UNIT, librarySource));
       }
@@ -3944,8 +4003,12 @@ class AnalysisContextImpl implements InternalAnalysisContext {
    * [_getNextAnalysisTaskForSource]. This method is intended to be used for
    * testing purposes only.
    */
-  void _getSourcesNeedingProcessing(Source source, SourceEntry sourceEntry,
-      bool isPriority, bool hintsEnabled, bool lintsEnabled,
+  void _getSourcesNeedingProcessing(
+      Source source,
+      SourceEntry sourceEntry,
+      bool isPriority,
+      bool hintsEnabled,
+      bool lintsEnabled,
       HashSet<Source> sources) {
     if (sourceEntry is DartEntry) {
       DartEntry dartEntry = sourceEntry;
@@ -4132,23 +4195,6 @@ class AnalysisContextImpl implements InternalAnalysisContext {
   bool _isTooBigHtmlSourceEntry(Source source, SourceEntry sourceEntry) =>
       false;
 
-  /**
-   * Log the given debugging [message].
-   */
-  void _logInformation(String message) {
-    AnalysisEngine.instance.logger.logInformation(message);
-  }
-
-  /**
-   * Notify all of the analysis listeners that a task is about to be performed.
-   */
-  void _notifyAboutToPerformTask(String taskDescription) {
-    int count = _listeners.length;
-    for (int i = 0; i < count; i++) {
-      _listeners[i].aboutToPerformTask(this, taskDescription);
-    }
-  }
-
 //  /**
 //   * Notify all of the analysis listeners that the given source is no longer included in the set of
 //   * sources that are being analyzed.
@@ -4226,6 +4272,23 @@ class AnalysisContextImpl implements InternalAnalysisContext {
 //      _listeners[i].resolvedHtml(this, source, unit);
 //    }
 //  }
+
+  /**
+   * Log the given debugging [message].
+   */
+  void _logInformation(String message) {
+    AnalysisEngine.instance.logger.logInformation(message);
+  }
+
+  /**
+   * Notify all of the analysis listeners that a task is about to be performed.
+   */
+  void _notifyAboutToPerformTask(String taskDescription) {
+    int count = _listeners.length;
+    for (int i = 0; i < count; i++) {
+      _listeners[i].aboutToPerformTask(this, taskDescription);
+    }
+  }
 
   /**
    * Notify all of the analysis listeners that the errors associated with the
@@ -4799,11 +4862,18 @@ class AnalysisContextImpl implements InternalAnalysisContext {
       // do resolution
       Stopwatch perfCounter = new Stopwatch()..start();
       PoorMansIncrementalResolver resolver = new PoorMansIncrementalResolver(
-          typeProvider, unitSource, getReadableSourceEntryOrNull(unitSource),
-          null, null, oldUnit, analysisOptions.incrementalApi, analysisOptions);
+          typeProvider,
+          unitSource,
+          getReadableSourceEntryOrNull(unitSource),
+          null,
+          null,
+          oldUnit,
+          analysisOptions.incrementalApi,
+          analysisOptions);
       bool success = resolver.resolve(newCode);
       AnalysisEngine.instance.instrumentationService.logPerformance(
-          AnalysisPerformanceKind.INCREMENTAL, perfCounter,
+          AnalysisPerformanceKind.INCREMENTAL,
+          perfCounter,
           'success=$success,context_id=$_id,code_length=${newCode.length}');
       if (!success) {
         return false;
@@ -5023,8 +5093,8 @@ class AnalysisContextImpl_CycleBuilder {
       // library.
       AnalysisTask task = _taskData.task;
       if (task is ResolveDartLibraryTask) {
-        AnalysisContextImpl_this._workManager.addFirst(
-            task.librarySource, SourcePriority.LIBRARY);
+        AnalysisContextImpl_this._workManager
+            .addFirst(task.librarySource, SourcePriority.LIBRARY);
       }
       return;
     }
@@ -5252,8 +5322,8 @@ class AnalysisContextImpl_CycleBuilder {
         AnalysisContextImpl_this._getReadableDartEntry(librarySource);
     if (libraryEntry != null &&
         libraryEntry.getState(DartEntry.PARSED_UNIT) != CacheState.ERROR) {
-      AnalysisContextImpl_this._workManager.addFirst(
-          librarySource, SourcePriority.LIBRARY);
+      AnalysisContextImpl_this._workManager
+          .addFirst(librarySource, SourcePriority.LIBRARY);
       if (_taskData == null) {
         _taskData = AnalysisContextImpl_this._createResolveDartLibraryTask(
             librarySource, libraryEntry);
@@ -5835,6 +5905,11 @@ class AnalysisEngine {
   bool limitInvalidationInTaskModel = false;
 
   /**
+   * The plugins that are defined outside the `analyzer` package.
+   */
+  List<Plugin> _userDefinedPlugins = <Plugin>[];
+
+  /**
    * The task manager used to manage the tasks used to analyze code.
    */
   TaskManager _taskManager;
@@ -5883,6 +5958,7 @@ class AnalysisEngine {
         commandLinePlugin,
         optionsPlugin
       ];
+      _supportedPlugins.addAll(_userDefinedPlugins);
     }
     return _supportedPlugins;
   }
@@ -5892,10 +5968,7 @@ class AnalysisEngine {
    */
   TaskManager get taskManager {
     if (_taskManager == null) {
-      if (enginePlugin.taskExtensionPoint == null) {
-        // The plugin wasn't used, so tasks are not registered.
-        new ExtensionManager().processPlugins([enginePlugin]);
-      }
+      new ExtensionManager().processPlugins(supportedPlugins);
       _taskManager = new TaskManager();
       _taskManager.addTaskDescriptors(enginePlugin.taskDescriptors);
       // TODO(brianwilkerson) Create a way to associate different results with
@@ -5903,6 +5976,18 @@ class AnalysisEngine {
       _taskManager.addGeneralResult(DART_ERRORS);
     }
     return _taskManager;
+  }
+
+  /**
+   * Set plugins that are defined outside the `analyzer` package.
+   */
+  void set userDefinedPlugins(List<Plugin> plugins) {
+    if (plugins == null) {
+      plugins = <Plugin>[];
+    }
+    _userDefinedPlugins = plugins;
+    _supportedPlugins = null;
+    _taskManager = null;
   }
 
   /**
@@ -6247,7 +6332,7 @@ class AnalysisOptionsImpl implements AnalysisOptions {
    * A flag indicating whether analysis is to generate dart2js related hint
    * results.
    */
-  bool dart2jsHint = true;
+  bool dart2jsHint = false;
 
   /**
    * A flag indicating whether generic methods are to be supported (DEP 22).
@@ -6570,8 +6655,8 @@ abstract class AnalysisTask {
       if (contextName == null) {
         contextName = 'unnamed';
       }
-      AnalysisEngine.instance.instrumentationService.logAnalysisTask(
-          contextName, taskDescription);
+      AnalysisEngine.instance.instrumentationService
+          .logAnalysisTask(contextName, taskDescription);
       internalPerform();
     } on AnalysisException {
       rethrow;
@@ -8405,8 +8490,11 @@ class GenerateDartErrorsTask extends AnalysisTask {
       //
       // Use the ErrorVerifier to compute the rest of the errors.
       //
-      ErrorVerifier errorVerifier = new ErrorVerifier(errorReporter,
-          libraryElement, typeProvider, new InheritanceManager(libraryElement),
+      ErrorVerifier errorVerifier = new ErrorVerifier(
+          errorReporter,
+          libraryElement,
+          typeProvider,
+          new InheritanceManager(libraryElement),
           context.analysisOptions.enableSuperMixins);
       _unit.accept(errorVerifier);
       _errors = errorListener.getErrorsForSource(source);
@@ -8441,8 +8529,10 @@ class GenerateDartErrorsTask extends AnalysisTask {
    * @param directive the directive to be verified
    * @param errorListener the error listener to which errors should be reported
    */
-  static void validateReferencedSource(AnalysisContext context,
-      Source librarySource, UriBasedDirective directive,
+  static void validateReferencedSource(
+      AnalysisContext context,
+      Source librarySource,
+      UriBasedDirective directive,
       AnalysisErrorListener errorListener) {
     Source source = directive.source;
     if (source != null) {
@@ -8456,8 +8546,11 @@ class GenerateDartErrorsTask extends AnalysisTask {
       }
     }
     StringLiteral uriLiteral = directive.uri;
-    errorListener.onError(new AnalysisError(librarySource, uriLiteral.offset,
-        uriLiteral.length, CompileTimeErrorCode.URI_DOES_NOT_EXIST,
+    errorListener.onError(new AnalysisError(
+        librarySource,
+        uriLiteral.offset,
+        uriLiteral.length,
+        CompileTimeErrorCode.URI_DOES_NOT_EXIST,
         [directive.uriContent]));
   }
 }
@@ -8549,7 +8642,6 @@ class GenerateDartHintsTask extends AnalysisTask {
 
 /// Generates lint feedback for a single Dart library.
 class GenerateDartLintsTask extends AnalysisTask {
-
   ///The compilation units that comprise the library, with the defining
   ///compilation unit appearing first in the list.
   final List<TimestampedData<CompilationUnit>> _units;
@@ -8679,8 +8771,8 @@ class GetContentTask extends AnalysisTask {
       TimestampedData<String> data = context.getContents(source);
       _content = data.data;
       _modificationTime = data.modificationTime;
-      AnalysisEngine.instance.instrumentationService.logFileRead(
-          source.fullName, _modificationTime, _content);
+      AnalysisEngine.instance.instrumentationService
+          .logFileRead(source.fullName, _modificationTime, _content);
     } catch (exception, stackTrace) {
       errors.add(new AnalysisError(
           source, 0, 0, ScannerErrorCode.UNABLE_GET_CONTENT, [exception]));
@@ -8965,8 +9057,14 @@ class IncrementalAnalysisCache {
 
   int _newLength = 0;
 
-  IncrementalAnalysisCache(this.librarySource, this.source, this.resolvedUnit,
-      this.oldContents, this._newContents, this._offset, this._oldLength,
+  IncrementalAnalysisCache(
+      this.librarySource,
+      this.source,
+      this.resolvedUnit,
+      this.oldContents,
+      this._newContents,
+      this._offset,
+      this._oldLength,
       this._newLength);
 
   /**
@@ -9051,9 +9149,15 @@ class IncrementalAnalysisCache {
    * @return the cache used for incremental analysis or `null` if incremental analysis cannot
    *         be performed
    */
-  static IncrementalAnalysisCache update(IncrementalAnalysisCache cache,
-      Source source, String oldContents, String newContents, int offset,
-      int oldLength, int newLength, SourceEntry sourceEntry) {
+  static IncrementalAnalysisCache update(
+      IncrementalAnalysisCache cache,
+      Source source,
+      String oldContents,
+      String newContents,
+      int offset,
+      int oldLength,
+      int newLength,
+      SourceEntry sourceEntry) {
     // Determine the cache resolved unit
     Source librarySource = null;
     CompilationUnit unit = null;
@@ -9479,8 +9583,9 @@ class ObsoleteSourceAnalysisException extends AnalysisException {
    * Initialize a newly created exception to represent the removal of the given
    * [source].
    */
-  ObsoleteSourceAnalysisException(Source source) : super(
-          "The source '${source.fullName}' was removed while it was being analyzed") {
+  ObsoleteSourceAnalysisException(Source source)
+      : super(
+            "The source '${source.fullName}' was removed while it was being analyzed") {
     this._source = source;
   }
 
@@ -10204,6 +10309,12 @@ class RecursiveXmlVisitor_ResolveHtmlTask_internalPerform
  * used to visit that structure.
  */
 class ResolutionEraser extends GeneralizingAstVisitor<Object> {
+  /**
+   * A flag indicating whether the elements associated with declarations should
+   * be erased.
+   */
+  bool eraseDeclarations = true;
+
   @override
   Object visitAssignmentExpression(AssignmentExpression node) {
     node.staticElement = null;
@@ -10226,13 +10337,17 @@ class ResolutionEraser extends GeneralizingAstVisitor<Object> {
 
   @override
   Object visitCompilationUnit(CompilationUnit node) {
-    node.element = null;
+    if (eraseDeclarations) {
+      node.element = null;
+    }
     return super.visitCompilationUnit(node);
   }
 
   @override
   Object visitConstructorDeclaration(ConstructorDeclaration node) {
-    node.element = null;
+    if (eraseDeclarations) {
+      node.element = null;
+    }
     return super.visitConstructorDeclaration(node);
   }
 
@@ -10250,7 +10365,9 @@ class ResolutionEraser extends GeneralizingAstVisitor<Object> {
 
   @override
   Object visitDirective(Directive node) {
-    node.element = null;
+    if (eraseDeclarations) {
+      node.element = null;
+    }
     return super.visitDirective(node);
   }
 
@@ -10263,7 +10380,9 @@ class ResolutionEraser extends GeneralizingAstVisitor<Object> {
 
   @override
   Object visitFunctionExpression(FunctionExpression node) {
-    node.element = null;
+    if (eraseDeclarations) {
+      node.element = null;
+    }
     return super.visitFunctionExpression(node);
   }
 
@@ -10310,7 +10429,9 @@ class ResolutionEraser extends GeneralizingAstVisitor<Object> {
 
   @override
   Object visitSimpleIdentifier(SimpleIdentifier node) {
-    node.staticElement = null;
+    if (eraseDeclarations || !node.inDeclarationContext()) {
+      node.staticElement = null;
+    }
     node.propagatedElement = null;
     return super.visitSimpleIdentifier(node);
   }
@@ -10324,8 +10445,10 @@ class ResolutionEraser extends GeneralizingAstVisitor<Object> {
   /**
    * Remove any resolution information from the given AST structure.
    */
-  static void erase(AstNode node) {
-    node.accept(new ResolutionEraser());
+  static void erase(AstNode node, {bool eraseDeclarations: true}) {
+    ResolutionEraser eraser = new ResolutionEraser();
+    eraser.eraseDeclarations = eraseDeclarations;
+    node.accept(eraser);
   }
 }
 
@@ -10837,8 +10960,11 @@ class ResolveDartUnitTask extends AnalysisTask {
     //
     PerformanceStatistics.errors.makeCurrentWhile(() {
       ErrorReporter errorReporter = new ErrorReporter(errorListener, source);
-      ErrorVerifier errorVerifier = new ErrorVerifier(errorReporter,
-          _libraryElement, typeProvider, inheritanceManager,
+      ErrorVerifier errorVerifier = new ErrorVerifier(
+          errorReporter,
+          _libraryElement,
+          typeProvider,
+          inheritanceManager,
           context.analysisOptions.enableSuperMixins);
       unit.accept(errorVerifier);
       // TODO(paulberry): as a temporary workaround for issue 21572,

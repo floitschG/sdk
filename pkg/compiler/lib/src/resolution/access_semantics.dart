@@ -2,9 +2,6 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-// TODO(johnniwinther): Temporarily copied from analyzer2dart. Merge when
-// we shared code with the analyzer and this semantic visitor is complete.
-
 /**
  * Code for classifying the semantics of identifiers appearing in a Dart file.
  */
@@ -215,6 +212,8 @@ abstract class AccessSemantics {
   /// [element] otherwise.
   Element get setter => element;
 
+  Name get name => null;
+
   const AccessSemantics._(this.kind);
 
   String toString() {
@@ -222,11 +221,18 @@ abstract class AccessSemantics {
     sb.write('AccessSemantics[');
     sb.write('kind=$kind,');
     if (element != null) {
-      sb.write('element=');
-      if (element.enclosingClass != null) {
-        sb.write('${element.enclosingClass.name}.');
+      if (getter != setter) {
+        sb.write('getter=');
+        sb.write('${getter}');
+        sb.write(',setter=');
+        sb.write('${setter}');
+      } else {
+        sb.write('element=');
+        sb.write('${element}');
       }
-      sb.write('${element}');
+    } else if (name != null) {
+      sb.write('name=');
+      sb.write(name);
     }
     sb.write(']');
     return sb.toString();
@@ -235,19 +241,23 @@ abstract class AccessSemantics {
 
 
 class DynamicAccess extends AccessSemantics {
+  final Name name;
+
   const DynamicAccess.expression()
-      : super._(AccessKind.EXPRESSION);
+      : name = null,
+        super._(AccessKind.EXPRESSION);
 
   const DynamicAccess.thisAccess()
-      : super._(AccessKind.THIS);
+      : name = null,
+        super._(AccessKind.THIS);
 
-  const DynamicAccess.thisProperty()
+  const DynamicAccess.thisProperty(this.name)
       : super._(AccessKind.THIS_PROPERTY);
 
-  const DynamicAccess.dynamicProperty()
+  const DynamicAccess.dynamicProperty(this.name)
       : super._(AccessKind.DYNAMIC_PROPERTY);
 
-  const DynamicAccess.ifNotNullProperty()
+  const DynamicAccess.ifNotNullProperty(this.name)
       : super._(AccessKind.CONDITIONAL_DYNAMIC_PROPERTY);
 }
 

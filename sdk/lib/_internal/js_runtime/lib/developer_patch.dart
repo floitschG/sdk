@@ -4,7 +4,7 @@
 
 // Patch file for dart:developer library.
 
-import 'dart:_js_helper' show patch;
+import 'dart:_js_helper' show patch, ForceInline;
 import 'dart:_foreign_helper' show JS;
 
 @patch
@@ -22,13 +22,25 @@ Object inspect(Object object) {
 }
 
 @patch
-log(String message,
-    {DateTime time,
-     int sequenceNumber,
-     int level: 0,
-     String name: '',
-     Zone zone,
-     Object error,
-     StackTrace stackTrace}) {
+void log(String message,
+         {DateTime time,
+          int sequenceNumber,
+          int level: 0,
+          String name: '',
+          Zone zone,
+          Object error,
+          StackTrace stackTrace}) {
   // TODO.
+}
+
+final _extensions = new Map<String, ServiceExtensionHandler>();
+
+@patch
+ServiceExtensionHandler _lookupExtension(String method) {
+  return _extensions[method];
+}
+
+@patch
+_registerExtension(String method, ServiceExtensionHandler handler) {
+  _extensions[method] = handler;
 }

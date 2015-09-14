@@ -192,10 +192,11 @@ class SExpressionStringifier extends Indentation implements Visitor<String> {
   }
 
   String visitBranch(Branch node) {
-    String condition = visit(node.condition);
+    String condition = access(node.condition);
     String trueCont = access(node.trueContinuation);
     String falseCont = access(node.falseContinuation);
-    return '$indentation(Branch $condition $trueCont $falseCont)';
+    String strict = node.isStrictCheck ? 'Strict' : 'NonStrict';
+    return '$indentation(Branch $condition $trueCont $falseCont $strict)';
   }
 
   String visitUnreachable(Unreachable node) {
@@ -249,11 +250,6 @@ class SExpressionStringifier extends Indentation implements Visitor<String> {
     String keys = node.entries.map((e) => access(e.key)).join(' ');
     String values = node.entries.map((e) => access(e.value)).join(' ');
     return '(LiteralMap ($keys) ($values))';
-  }
-
-  String visitIsTrue(IsTrue node) {
-    String value = access(node.value);
-    return '(IsTrue $value)';
   }
 
   String visitSetField(SetField node) {
@@ -337,7 +333,8 @@ class SExpressionStringifier extends Indentation implements Visitor<String> {
     String arguments = node.arguments.map(access).join(' ');
     String continuation = node.continuation == null ? ''
         : ' ${access(node.continuation)}';
-    return '(JS ${node.type} ${node.codeTemplate} ($arguments)$continuation)';
+    return '$indentation(JS "${node.codeTemplate.source}"'
+        ' ($arguments)$continuation)';
   }
 
   String visitGetLength(GetLength node) {
@@ -363,6 +360,12 @@ class SExpressionStringifier extends Indentation implements Visitor<String> {
     String value = access(node.input);
     String continuation = access(node.continuation);
     return '(Await $value $continuation)';
+  }
+
+  @override
+  String visitRefinement(Refinement node) {
+    String value = access(node.value);
+    return '(Refinement $value ${node.type})';
   }
 }
 
@@ -426,11 +429,11 @@ class ConstantStringifier extends ConstantValueVisitor<String, Null> {
   }
 
   String visitInterceptor(InterceptorConstantValue constant, _) {
-    return _failWith(constant);
+    return '(Interceptor "${constant.unparse()}")';
   }
 
   String visitSynthetic(SyntheticConstantValue constant, _) {
-    return _failWith(constant);
+    return '(Synthetic "${constant.unparse()}")';
   }
 
   String visitDeferred(DeferredConstantValue constant, _) {

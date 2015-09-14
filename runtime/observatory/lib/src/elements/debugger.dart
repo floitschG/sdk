@@ -317,11 +317,13 @@ class ContinueCommand extends DebuggerCommand {
       '        c\n';
 }
 
-class NextCommand extends DebuggerCommand {
-  NextCommand(Debugger debugger) : super(debugger, 'next', []);
+class SmartNextCommand extends DebuggerCommand {
+  SmartNextCommand(Debugger debugger) : super(debugger, 'next', []) {
+    alias = 'n';
+  }
 
-  Future run(List<String> args) {
-    return debugger.next();
+  Future run(List<String> args) async {
+    return debugger.smartNext();
   }
 
   String helpShort =
@@ -335,6 +337,40 @@ class NextCommand extends DebuggerCommand {
       'Hotkey: [F9]\n'
       '\n'
       'Syntax: next\n';
+}
+
+class SyncNextCommand extends DebuggerCommand {
+  SyncNextCommand(Debugger debugger) : super(debugger, 'next-sync', []);
+
+  Future run(List<String> args) {
+    return debugger.syncNext();
+  }
+
+  String helpShort =
+      'Run until return/unwind to current activation.';
+
+  String helpLong =
+      'Continue running the isolate until control returns to the current '
+      'activation or one of its callers.\n'
+      '\n'
+      'Syntax: next-sync\n';
+}
+
+class AsyncNextCommand extends DebuggerCommand {
+  AsyncNextCommand(Debugger debugger) : super(debugger, 'next-async', []);
+
+  Future run(List<String> args) {
+    return debugger.asyncNext();
+  }
+
+  String helpShort =
+      'Step over await or yield';
+
+  String helpLong =
+      'Continue running the isolate until control returns to the current '
+      'activation of an async or async* function.\n'
+      '\n'
+      'Syntax: next-async\n';
 }
 
 class StepCommand extends DebuggerCommand {
@@ -443,33 +479,6 @@ class LogCommand extends DebuggerCommand {
       '# Display no log messages.\n'
       '        log ALL      '
       '# Display all log messages.\n';
-}
-
-class AsyncNextCommand extends DebuggerCommand {
-  AsyncNextCommand(Debugger debugger) : super(debugger, 'anext', []) {
-  }
-
-  Future run(List<String> args) async {
-    if (debugger.isolatePaused()) {
-      var event = debugger.isolate.pauseEvent;
-      if (event.asyncContinuation == null) {
-        debugger.console.print("No async continuation at this location");
-      } else {
-        return debugger.isolate.asyncStepOver()[Isolate.kFirstResume];
-      }
-    } else {
-      debugger.console.print('The program is already running');
-    }
-  }
-
-  String helpShort =
-      'Step over await or yield';
-
-  String helpLong =
-      'Continue running the isolate until control returns to the current '
-      'activation of an async or async* function.\n'
-      '\n'
-      'Syntax: anext\n';
 }
 
 class FinishCommand extends DebuggerCommand {
@@ -612,7 +621,7 @@ class SetCommand extends DebuggerCommand {
       'Set a debugger option.\n'
       '\n'
       'Known options:\n'
-      '  break-on-exceptions   # Should the debugger break on exceptions?\n'
+      '  break-on-exception    # Should the debugger break on exceptions?\n'
       "                        # ${_boeValues}\n"
       '  up-is-down            # Reverse meaning of up/down commands?\n'
       "                        # ${_boolValues}\n"
@@ -628,7 +637,7 @@ class BreakCommand extends DebuggerCommand {
   Future run(List<String> args) async {
     if (args.length > 1) {
       debugger.console.print('not implemented');
-      return new Future.value(null);
+      return;
     }
     var arg = (args.length == 0 ? '' : args[0]);
     var loc = await DebuggerLocation.parse(debugger, arg);
@@ -645,14 +654,15 @@ class BreakCommand extends DebuggerCommand {
         }
       } else {
         assert(loc.script != null);
-        if (loc.col != null) {
-          // TODO(turnidge): Add tokenPos breakpoint support.
+        var script = loc.script;
+        await script.load();
+        if (loc.line < 1 || loc.line > script.lines.length) {
           debugger.console.print(
-              'Ignoring column: '
-              'adding breakpoint at a specific column not yet implemented');
-          }
+              'line number must be in range [1,${script.lines.length}]');
+          return;
+        }
         try {
-          await debugger.isolate.addBreakpoint(loc.script, loc.line);
+          await debugger.isolate.addBreakpoint(script, loc.line, loc.col);
         } on ServerRpcException catch(e) {
           if (e.code == ServerRpcException.kCannotAddBreakpoint) {
             debugger.console.print('Unable to set breakpoint at ${loc}');
@@ -709,48 +719,50 @@ class BreakCommand extends DebuggerCommand {
 class ClearCommand extends DebuggerCommand {
   ClearCommand(Debugger debugger) : super(debugger, 'clear', []);
 
-  Future run(List<String> args) {
+  Future run(List<String> args) async {
     if (args.length > 1) {
       debugger.console.print('not implemented');
-      return new Future.value(null);
+      return;
     }
     var arg = (args.length == 0 ? '' : args[0]);
-    return DebuggerLocation.parse(debugger, arg).then((loc) {
-      if (loc.valid) {
-        if (loc.function != null) {
-          debugger.console.print(
-              'Ignoring breakpoint at $loc: '
-              'Function entry breakpoints not yet implemented');
-          return null;
-        }
-        if (loc.col != null) {
-          // TODO(turnidge): Add tokenPos clear support.
-          debugger.console.print(
-              'Ignoring column: '
-              'clearing breakpoint at a specific column not yet implemented');
-        }
+    var loc = await DebuggerLocation.parse(debugger, arg);
+    if (!loc.valid) {
+      debugger.console.print(loc.errorMessage);
+      return;
+    }
+    if (loc.function != null) {
+      debugger.console.print(
+          'Ignoring breakpoint at $loc: '
+          'Clearing function breakpoints not yet implemented');
+      return;
+    }
 
-        for (var bpt in debugger.isolate.breakpoints.values) {
-          var script = bpt.location.script;
-          if (script.id == loc.script.id) {
-            assert(script.loaded);
-            var line = script.tokenToLine(bpt.location.tokenPos);
-            if (line == loc.line) {
-              return debugger.isolate.removeBreakpoint(bpt).then((result) {
-                if (result is DartError) {
-                  debugger.console.print(
-                      'Unable to clear breakpoint at ${loc}: ${result.message}');
-                  return;
-                }
-              });
-            }
+    var script = loc.script;
+    if (loc.line < 1 || loc.line > script.lines.length) {
+      debugger.console.print(
+          'line number must be in range [1,${script.lines.length}]');
+      return;
+    }
+    var lineInfo = script.getLine(loc.line);
+    var bpts = lineInfo.breakpoints;
+    var foundBreakpoint = false;
+    if (bpts != null) {
+      var bptList = bpts.toList();
+      for (var bpt in bptList) {
+        if (loc.col == null ||
+            loc.col == script.tokenToCol(bpt.location.tokenPos)) {
+          foundBreakpoint = true;
+          var result = await debugger.isolate.removeBreakpoint(bpt);
+          if (result is DartError) {
+            debugger.console.print(
+                'Error clearing breakpoint ${bpt.number}: ${result.message}');
           }
         }
-        debugger.console.print('No breakpoint found at ${loc}');
-      } else {
-        debugger.console.print(loc.errorMessage);
       }
-    });
+    }
+    if (!foundBreakpoint) {
+      debugger.console.print('No breakpoint found at ${loc}');
+    }
   }
 
   Future<List<String>> complete(List<String> args) {
@@ -837,7 +849,7 @@ class InfoBreakpointsCommand extends DebuggerCommand {
   InfoBreakpointsCommand(Debugger debugger)
       : super(debugger, 'breakpoints', []);
 
-  Future run(List<String> args) {
+  Future run(List<String> args) async {
     if (debugger.isolate.breakpoints.isEmpty) {
       debugger.console.print('No breakpoints');
     }
@@ -845,19 +857,15 @@ class InfoBreakpointsCommand extends DebuggerCommand {
     bpts.sort((a, b) => a.number - b.number);
     for (var bpt in bpts) {
       var bpId = bpt.number;
-      var script = bpt.location.script;
-      var tokenPos = bpt.location.tokenPos;
-      var line = script.tokenToLine(tokenPos);
-      var col = script.tokenToCol(tokenPos);
+      var locString = await bpt.location.toUserString();
       if (!bpt.resolved) {
         debugger.console.print(
-            'Future breakpoint ${bpId} at ${script.name}:${line}:${col}');
+            'Future breakpoint ${bpId} at ${locString}');
       } else {
         debugger.console.print(
-            'Breakpoint ${bpId} at ${script.name}:${line}:${col}');
+            'Breakpoint ${bpId} at ${locString}');
       }
     }
-    return new Future.value(null);
   }
 
   String helpShort = 'List all breakpoints';
@@ -1205,26 +1213,27 @@ class ObservatoryDebugger extends Debugger {
   ObservatoryDebugger() {
     _loadSettings();
     cmd = new RootCommand([
-        new HelpCommand(this),
-        new PrintCommand(this),
-        new DownCommand(this),
-        new UpCommand(this),
-        new FrameCommand(this),
-        new PauseCommand(this),
-        new ContinueCommand(this),
-        new NextCommand(this),
-        new StepCommand(this),
         new AsyncNextCommand(this),
-        new FinishCommand(this),
         new BreakCommand(this),
-        new SetCommand(this),
         new ClearCommand(this),
+        new ClsCommand(this),
+        new ContinueCommand(this),
         new DeleteCommand(this),
+        new DownCommand(this),
+        new FinishCommand(this),
+        new FrameCommand(this),
+        new HelpCommand(this),
         new InfoCommand(this),
         new IsolateCommand(this),
-        new RefreshCommand(this),
         new LogCommand(this),
-        new ClsCommand(this),
+        new PauseCommand(this),
+        new PrintCommand(this),
+        new RefreshCommand(this),
+        new SetCommand(this),
+        new SmartNextCommand(this),
+        new StepCommand(this),
+        new SyncNextCommand(this),
+        new UpCommand(this),
     ]);
     _consolePrinter = new _ConsoleStreamPrinter(this);
   }
@@ -1374,14 +1383,11 @@ class ObservatoryDebugger extends Debugger {
         } else {
           console.print('Paused at ${script.name}:${line}:${col}');
         }
-        if (event.asyncContinuation != null) {
-          console.print("Paused in async function: 'anext' available");
-        }
       });
     }
   }
 
-  Future _reportBreakpointEvent(ServiceEvent event) {
+  Future _reportBreakpointEvent(ServiceEvent event) async {
     var bpt = event.breakpoint;
     var verb = null;
     switch (event.kind) {
@@ -1398,19 +1404,17 @@ class ObservatoryDebugger extends Debugger {
         break;
     }
     var script = bpt.location.script;
-    return script.load().then((_) {
-      var bpId = bpt.number;
-      var tokenPos = bpt.location.tokenPos;
-      var line = script.tokenToLine(tokenPos);
-      var col = script.tokenToCol(tokenPos);
-      if (bpt.resolved) {
-        console.print(
-            'Breakpoint ${bpId} ${verb} at ${script.name}:${line}:${col}');
-      } else {
-        console.print(
-            'Future breakpoint ${bpId} ${verb} at ${script.name}:${line}:${col}');
-      }
-    });
+    await script.load();
+
+    var bpId = bpt.number;
+    var locString = await bpt.location.toUserString();
+    if (bpt.resolved) {
+      console.print(
+          'Breakpoint ${bpId} ${verb} at ${locString}');
+    } else {
+      console.print(
+          'Future breakpoint ${bpId} ${verb} at ${locString}');
+    }
   }
 
   void onEvent(ServiceEvent event) {
@@ -1475,10 +1479,11 @@ class ObservatoryDebugger extends Debugger {
         }
         break;
 
-      case ServiceEvent.kIsolateStart:
+      case ServiceEvent.kIsolateRunnable:
       case ServiceEvent.kGraph:
       case ServiceEvent.kGC:
       case ServiceEvent.kInspect:
+        // Ignore.
         break;
 
       case ServiceEvent.kLogging:
@@ -1618,21 +1623,48 @@ class ObservatoryDebugger extends Debugger {
     return new Future.value(null);
   }
 
-  Future next() {
+
+  Future smartNext() async {
+    if (isolatePaused()) {
+      var event = isolate.pauseEvent;
+      if (event.atAsyncJump) {
+        return asyncNext();
+      } else {
+        return syncNext();
+      }
+    } else {
+      console.print('The program is already running');
+    }
+  }
+
+  Future asyncNext() async {
+    if (isolatePaused()) {
+      var event = isolate.pauseEvent;
+      if (event.asyncContinuation == null) {
+        console.print("No async continuation at this location");
+      } else {
+        return isolate.asyncStepOver()[Isolate.kFirstResume];
+      }
+    } else {
+      console.print('The program is already running');
+    }
+  }
+
+  Future syncNext() async {
     if (isolatePaused()) {
       var event = isolate.pauseEvent;
       if (event.kind == ServiceEvent.kPauseStart) {
         console.print("Type 'continue' [F7] or 'step' [F10] to start the isolate");
-        return new Future.value(null);
+        return;
       }
       if (event.kind == ServiceEvent.kPauseExit) {
         console.print("Type 'continue' [F7] to exit the isolate");
-        return new Future.value(null);
+        return;
       }
       return isolate.stepOver();
     } else {
       console.print('The program is already running');
-      return new Future.value(null);
+      return;
     }
   }
 
@@ -1666,6 +1698,7 @@ class DebuggerPageElement extends ObservatoryElement {
     debugger.page = this;
   }
 
+  StreamSubscription _resizeSubscription;
   Future<StreamSubscription> _isolateSubscriptionFuture;
   Future<StreamSubscription> _debugSubscriptionFuture;
   Future<StreamSubscription> _stdoutSubscriptionFuture;
@@ -1675,21 +1708,7 @@ class DebuggerPageElement extends ObservatoryElement {
   @override
   void attached() {
     super.attached();
-
-    var navbarDiv = $['navbarDiv'];
-    var stackDiv = $['stackDiv'];
-    var splitterDiv = $['splitterDiv'];
-    var cmdDiv = $['commandDiv'];
-
-    int navbarHeight = navbarDiv.clientHeight;
-    int splitterHeight = splitterDiv.clientHeight;
-    int cmdHeight = cmdDiv.clientHeight;
-
-    int windowHeight = window.innerHeight;
-    int fixedHeight = navbarHeight + splitterHeight + cmdHeight;
-    int available = windowHeight - fixedHeight;
-    int stackHeight = available ~/ 1.6;
-    stackDiv.style.setProperty('height', '${stackHeight}px');
+    _onResize(null);
 
     // Wire the debugger object to the stack, console, and command line.
     var stackElement = $['stackElement'];
@@ -1700,6 +1719,7 @@ class DebuggerPageElement extends ObservatoryElement {
     debugger.input.debugger = debugger;
     debugger.init();
 
+    _resizeSubscription = window.onResize.listen(_onResize);
     _isolateSubscriptionFuture =
         app.vm.listenEventStream(VM.kIsolateStream, debugger.onEvent);
     _debugSubscriptionFuture =
@@ -1740,9 +1760,28 @@ class DebuggerPageElement extends ObservatoryElement {
     debugger.flushStdio();
   }
 
+  void _onResize(_) {
+    var navbarDiv = $['navbarDiv'];
+    var stackDiv = $['stackDiv'];
+    var splitterDiv = $['splitterDiv'];
+    var cmdDiv = $['commandDiv'];
+
+    int navbarHeight = navbarDiv.clientHeight;
+    int splitterHeight = splitterDiv.clientHeight;
+    int cmdHeight = cmdDiv.clientHeight;
+
+    int windowHeight = window.innerHeight;
+    int fixedHeight = navbarHeight + splitterHeight + cmdHeight;
+    int available = windowHeight - fixedHeight;
+    int stackHeight = available ~/ 1.6;
+    stackDiv.style.setProperty('height', '${stackHeight}px');
+  }
+
   @override
   void detached() {
     debugger.isolate = null;
+    _resizeSubscription.cancel();
+    _resizeSubscription = null;
     cancelFutureSubscription(_isolateSubscriptionFuture);
     _isolateSubscriptionFuture = null;
     cancelFutureSubscription(_debugSubscriptionFuture);
@@ -2287,7 +2326,7 @@ class DebuggerInputElement extends ObservatoryElement {
 
           case KeyCode.F9:
             e.preventDefault();
-            debugger.next().whenComplete(() {
+            debugger.smartNext().whenComplete(() {
               busy = false;
             });
             break;

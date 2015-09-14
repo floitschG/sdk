@@ -5,8 +5,7 @@
 library elements.modelx;
 
 import '../compiler.dart' show
-    Compiler,
-    isPrivateName;
+    Compiler;
 import '../constants/constant_constructors.dart';
 import '../constants/constructors.dart';
 import '../constants/expressions.dart';
@@ -23,14 +22,25 @@ import '../diagnostics/spannable.dart' show
 import '../helpers/helpers.dart';
 import '../ordered_typeset.dart' show
     OrderedTypeSet;
-import '../resolution/resolution.dart';
 import '../resolution/class_members.dart' show
     ClassMemberMixin;
-import '../scanner/scannerlib.dart' show
-    EOF_TOKEN,
+import '../resolution/scope.dart' show
+    ClassScope,
+    LibraryScope,
+    Scope,
+    TypeDeclarationScope;
+import '../resolution/resolution.dart' show
+    AnalyzableElementX;
+import '../resolution/tree_elements.dart' show
+    TreeElements;
+import '../resolution/typedefs.dart' show
+    TypedefCyclicVisitor;
+import '../script.dart';
+import '../tokens/token.dart' show
     ErrorToken,
     Token;
-import '../script.dart';
+import '../tokens/token_constants.dart' as Tokens show
+    EOF_TOKEN;
 import '../tree/tree.dart';
 import '../util/util.dart';
 
@@ -49,7 +59,7 @@ abstract class ElementX extends Element with ElementCommon {
   final ElementKind kind;
   final Element enclosingElement;
   final int hashCode = ++elementHashCode;
-  Link<MetadataAnnotation> metadata = const Link<MetadataAnnotation>();
+  List<MetadataAnnotation> metadataInternal;
 
   ElementX(this.name, this.kind, this.enclosingElement) {
     assert(isErroneous || implementationLibrary != null);
@@ -63,14 +73,27 @@ abstract class ElementX extends Element with ElementCommon {
     return null;
   }
 
-  void addMetadata(MetadataAnnotationX annotation) {
-    assert(annotation.annotatedElement == null);
-    annotation.annotatedElement = this;
-    addMetadataInternal(annotation);
+  void set metadata(List<MetadataAnnotation> metadata) {
+    assert(metadataInternal == null);
+    for (MetadataAnnotationX annotation in metadata) {
+      assert(annotation.annotatedElement == null);
+      annotation.annotatedElement = this;
+    }
+    metadataInternal = metadata;
   }
 
-  void addMetadataInternal(MetadataAnnotation annotation) {
-    metadata = metadata.prepend(annotation);
+  Iterable<MetadataAnnotation> get metadata {
+    if (isPatch && metadataInternal != null) {
+      if (origin.metadata.isEmpty) {
+        return metadataInternal;
+      } else {
+        return <MetadataAnnotation>[]
+            ..addAll(origin.metadata)
+            ..addAll(metadataInternal);
+      }
+    }
+    return metadataInternal != null
+        ? metadataInternal : const <MetadataAnnotation>[];
   }
 
   bool get isClosure => false;
@@ -129,7 +152,7 @@ abstract class ElementX extends Element with ElementCommon {
     String needle = isConstructor ? enclosingClassName : name;
     // The unary '-' operator has a special element name (specified).
     if (needle == 'unary-') needle = '-';
-    for (Token t = token; EOF_TOKEN != t.kind; t = t.next) {
+    for (Token t = token; Tokens.EOF_TOKEN != t.kind; t = t.next) {
       if (t is !ErrorToken && needle == t.value) return t;
     }
     return token;
@@ -270,7 +293,7 @@ class ErroneousElementX extends ElementX implements ErroneousElement {
   }
 
   get asyncMarker => AsyncMarker.SYNC;
-  Link<MetadataAnnotation> get metadata => unsupported();
+  Iterable<MetadataAnnotation> get metadata => unsupported();
   bool get hasNode => false;
   get node => unsupported();
   get hasResolvedAst => false;
@@ -668,6 +691,19 @@ class CompilationUnitElementX extends ElementX
   @override
   LibraryElementX get library => enclosingElement.declaration;
 
+  void set metadata(List<MetadataAnnotation> metadata) {
+    for (MetadataAnnotationX annotation in metadata) {
+      assert(annotation.annotatedElement == null);
+      annotation.annotatedElement = this;
+    }
+    // TODO(johnniwinther): Remove this work-around when import, export,
+    // part, and part-of declarations are elements.
+    if (metadataInternal == null) {
+      metadataInternal = <MetadataAnnotation>[];
+    }
+    metadataInternal.addAll(metadata);
+  }
+
   void forEachLocalMember(f(Element element)) {
     localMembers.forEach(f);
   }
@@ -686,6 +722,7 @@ class CompilationUnitElementX extends ElementX
   void setPartOf(PartOf tag, DiagnosticListener listener) {
     LibraryElementX library = enclosingElement;
     if (library.entryCompilationUnit == this) {
+      partTag = tag;
       listener.reportError(tag, MessageKind.IMPORT_PART_OF);
       return;
     }
@@ -881,11 +918,14 @@ class LibraryElementX
     }
   }
 
-  Link<MetadataAnnotation> get metadata {
-    return (libraryTag == null) ? super.metadata : libraryTag.metadata;
+  Iterable<MetadataAnnotation> get metadata {
+    if (libraryTag != null) {
+      return libraryTag.metadata;
+    }
+    return const <MetadataAnnotation>[];
   }
 
-  set metadata(value) {
+  void set metadata(value) {
     // The metadata is stored on [libraryTag].
     throw new SpannableAssertionFailure(this, 'Cannot set metadata on Library');
   }
@@ -1003,10 +1043,12 @@ class LibraryElementX
   /** Look up a top-level element in this library, but only look for
     * non-imported elements. Returns null if no such element exist. */
   Element findLocal(String elementName) {
-    // TODO(johnniwinther): How to handle injected elements in the patch
+    // TODO((johnniwinther): How to handle injected elements in the patch
     // library?
     Element result = localScope.lookup(elementName);
-    if (result == null || result.library != this) return null;
+    if (result == null && isPatch) {
+      return origin.findLocal(elementName);
+    }
     return result;
   }
 
@@ -1050,7 +1092,7 @@ class LibraryElementX
     return localScope.values.where((Element element) {
       // At this point [localScope] only contains members so we don't need
       // to check for foreign or prefix elements.
-      return !isPrivateName(element.name);
+      return !Name.isPrivateName(element.name);
     });
   }
 
@@ -1205,7 +1247,7 @@ class VariableList implements DeclarationSite {
   VariableDefinitions definitions;
   DartType type;
   final Modifiers modifiers;
-  Link<MetadataAnnotation> metadata = const Link<MetadataAnnotation>();
+  List<MetadataAnnotation> metadataInternal;
 
   VariableList(Modifiers this.modifiers);
 
@@ -1213,6 +1255,25 @@ class VariableList implements DeclarationSite {
       : this.definitions = node,
         this.modifiers = node.modifiers {
     assert(modifiers != null);
+  }
+
+  Iterable<MetadataAnnotation> get metadata {
+    return metadataInternal != null
+        ? metadataInternal : const <MetadataAnnotation>[];
+  }
+
+  void set metadata(List<MetadataAnnotation> metadata) {
+    if (metadata.isEmpty) {
+      // For a multi declaration like:
+      //
+      //    @foo @bar var a, b, c
+      //
+      // the metadata list is reported through the declaration of `a`, and `b`
+      // and `c` report an empty list of metadata.
+      return;
+    }
+    assert(metadataInternal == null);
+    metadataInternal = metadata;
   }
 
   VariableDefinitions parseNode(Element element, DiagnosticListener listener) {
@@ -1271,10 +1332,14 @@ abstract class VariableElementX extends ElementX
 
   // TODO(johnniwinther): Ensure that the [TreeElements] for this variable hold
   // the mappings for all its metadata.
-  Link<MetadataAnnotation> get metadata => variables.metadata;
+  Iterable<MetadataAnnotation> get metadata => variables.metadata;
 
-  void addMetadataInternal(MetadataAnnotation annotation) {
-    variables.metadata = variables.metadata.prepend(annotation);
+  void set metadata(List<MetadataAnnotation> metadata) {
+    for (MetadataAnnotationX annotation in metadata) {
+      assert(annotation.annotatedElement == null);
+      annotation.annotatedElement = this;
+    }
+    variables.metadata = metadata;
   }
 
   // A variable cannot be patched therefore defines itself.
@@ -2084,7 +2149,7 @@ class ConstructorBodyElementX extends BaseFunctionElementX
 
   FunctionExpression get node => constructor.node;
 
-  Link<MetadataAnnotation> get metadata => constructor.metadata;
+  List<MetadataAnnotation> get metadata => constructor.metadata;
 
   bool get isInstanceMember => true;
 
@@ -2313,7 +2378,11 @@ abstract class BaseClassElementX extends ElementX
   bool get isEnumClass => false;
 
   InterfaceType computeType(Compiler compiler) {
-    if (thisTypeCache == null) {
+    if (isPatch) {
+      origin.computeType(compiler);
+      thisTypeCache = origin.thisType;
+      rawTypeCache = origin.rawType;
+    } else if (thisTypeCache == null) {
       computeThisAndRawType(compiler, computeTypeParameters(compiler));
     }
     return thisTypeCache;
@@ -2346,6 +2415,7 @@ abstract class BaseClassElementX extends ElementX
   void ensureResolved(Compiler compiler) {
     if (resolutionState == STATE_NOT_STARTED) {
       compiler.resolver.resolveClass(this);
+      compiler.world.registerClass(this);
     }
   }
 
@@ -2600,7 +2670,7 @@ class MixinApplicationElementX extends BaseClassElementX
   final Node node;
   final Modifiers modifiers;
 
-  Link<FunctionElement> constructors = new Link<FunctionElement>();
+  Link<ConstructorElement> constructors = new Link<ConstructorElement>();
 
   InterfaceType mixinType;
 

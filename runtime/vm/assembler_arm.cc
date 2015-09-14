@@ -20,6 +20,7 @@
 
 namespace dart {
 
+DECLARE_FLAG(bool, allow_absolute_addresses);
 DEFINE_FLAG(bool, print_stop_message, true, "Print stop message.");
 DECLARE_FLAG(bool, inline_alloc);
 
@@ -1583,6 +1584,7 @@ void Assembler::LoadObjectHelper(Register rd,
   if (object.IsSmi()) {
     LoadImmediate(rd, reinterpret_cast<int32_t>(object.raw()), cond);
   } else if (object.InVMHeap() || !constant_pool_allowed()) {
+    ASSERT(FLAG_allow_absolute_addresses);
     // Make sure that class CallPattern is able to decode this load immediate.
     const int32_t object_raw = reinterpret_cast<int32_t>(object.raw());
     LoadImmediate(rd, object_raw, cond);
@@ -1615,6 +1617,16 @@ void Assembler::LoadExternalLabel(Register rd,
                                   Condition cond) {
   const int32_t offset = ObjectPool::element_offset(
       object_pool_wrapper_.FindExternalLabel(label, patchable));
+  LoadWordFromPoolOffset(rd, offset - kHeapObjectTag, cond);
+}
+
+
+void Assembler::LoadNativeEntry(Register rd,
+                                const ExternalLabel* label,
+                                Patchability patchable,
+                                Condition cond) {
+  const int32_t offset = ObjectPool::element_offset(
+      object_pool_wrapper_.FindNativeEntry(label, patchable));
   LoadWordFromPoolOffset(rd, offset - kHeapObjectTag, cond);
 }
 
@@ -1767,7 +1779,7 @@ void Assembler::VerifiedWrite(const Address& address,
       LoadImmediate(temp, Heap::kZap32Bits);
       cmp(old_value, Operand(temp));
       b(&ok, EQ);
-      LoadImmediate(temp, reinterpret_cast<uint32_t>(Object::null()));
+      LoadObject(temp, Object::null_object());
       cmp(old_value, Operand(temp));
       b(&ok, EQ);
       Stop("Expected zapped, Smi or null");
@@ -2065,7 +2077,7 @@ int32_t Assembler::EncodeBranchOffset(int32_t offset, int32_t inst) {
 
   if (!CanEncodeBranchOffset(offset)) {
     ASSERT(!use_far_branches());
-    Isolate::Current()->long_jump_base()->Jump(
+    Thread::Current()->long_jump_base()->Jump(
         1, Object::branch_offset_error());
   }
 
@@ -2678,43 +2690,26 @@ void Assembler::Vdivqs(QRegister qd, QRegister qn, QRegister qm) {
 }
 
 
-void Assembler::Branch(const ExternalLabel* label, Condition cond) {
-  LoadImmediate(IP, label->address(), cond);  // Address is never patched.
+void Assembler::Branch(const StubEntry& stub_entry, Condition cond) {
+  // Address is never patched.
+  LoadImmediate(IP, stub_entry.label().address(), cond);
   bx(IP, cond);
 }
 
 
-void Assembler::Branch(const StubEntry& stub_entry, Condition cond) {
-  const ExternalLabel label(stub_entry.EntryPoint());
-  Branch(&label, cond);
-}
-
-
-void Assembler::BranchPatchable(const ExternalLabel* label) {
+void Assembler::BranchPatchable(const StubEntry& stub_entry) {
   // Use a fixed size code sequence, since a function prologue may be patched
   // with this branch sequence.
   // Contrarily to BranchLinkPatchable, BranchPatchable requires an instruction
   // cache flush upon patching.
-  LoadPatchableImmediate(IP, label->address());
+  LoadPatchableImmediate(IP, stub_entry.label().address());
   bx(IP);
-}
-
-
-void Assembler::BranchPatchable(const StubEntry& stub_entry) {
-  const ExternalLabel label(stub_entry.EntryPoint());
-  BranchPatchable(&label);
 }
 
 
 void Assembler::BranchLink(const ExternalLabel* label) {
   LoadImmediate(LR, label->address());  // Target address is never patched.
   blx(LR);  // Use blx instruction so that the return branch prediction works.
-}
-
-
-void Assembler::BranchLink(const StubEntry& stub_entry) {
-  const ExternalLabel label(stub_entry.EntryPoint());
-  BranchLink(&label);
 }
 
 
@@ -2725,26 +2720,19 @@ void Assembler::BranchLink(const ExternalLabel* label, Patchability patchable) {
   // use 'blx ip' in a non-patchable sequence (see other BranchLink flavors).
   const int32_t offset = ObjectPool::element_offset(
       object_pool_wrapper_.FindExternalLabel(label, patchable));
-  LoadWordFromPoolOffset(LR, offset - kHeapObjectTag);
+  LoadWordFromPoolOffset(LR, offset - kHeapObjectTag, AL);
   blx(LR);  // Use blx instruction so that the return branch prediction works.
 }
 
 
 void Assembler::BranchLink(const StubEntry& stub_entry,
                            Patchability patchable) {
-  const ExternalLabel label(stub_entry.EntryPoint());
-  BranchLink(&label, patchable);
-}
-
-
-void Assembler::BranchLinkPatchable(const ExternalLabel* label) {
-  BranchLink(label, kPatchable);
+  BranchLink(&stub_entry.label(), patchable);
 }
 
 
 void Assembler::BranchLinkPatchable(const StubEntry& stub_entry) {
-  const ExternalLabel label(stub_entry.EntryPoint());
-  BranchLinkPatchable(&label);
+  BranchLink(&stub_entry.label(), kPatchable);
 }
 
 
@@ -2785,7 +2773,7 @@ void Assembler::LoadDecodableImmediate(
   if ((version == ARMv5TE) || (version == ARMv6)) {
     if (constant_pool_allowed()) {
       const int32_t offset = Array::element_offset(FindImmediate(value));
-      LoadWordFromPoolOffset(rd, offset - kHeapObjectTag);
+      LoadWordFromPoolOffset(rd, offset - kHeapObjectTag, cond);
     } else {
       LoadPatchableImmediate(rd, value, cond);
     }
@@ -3256,8 +3244,9 @@ void Assembler::ReserveAlignedFrameSpace(intptr_t frame_space) {
 
 
 void Assembler::EnterCallRuntimeFrame(intptr_t frame_space) {
-  // Preserve volatile CPU registers.
-  EnterFrame(kDartVolatileCpuRegs | (1 << FP), 0);
+  // Preserve volatile CPU registers and PP.
+  EnterFrame(kDartVolatileCpuRegs | (1 << PP) | (1 << FP), 0);
+  COMPILE_ASSERT((kDartVolatileCpuRegs & (1 << PP)) == 0);
 
   // Preserve all volatile FPU registers.
   if (TargetCPUFeatures::vfp_supported()) {
@@ -3272,6 +3261,8 @@ void Assembler::EnterCallRuntimeFrame(intptr_t frame_space) {
     }
   }
 
+  LoadPoolPointer();
+
   ReserveAlignedFrameSpace(frame_space);
 }
 
@@ -3284,10 +3275,12 @@ void Assembler::LeaveCallRuntimeFrame() {
       TargetCPUFeatures::vfp_supported() ?
       kDartVolatileFpuRegCount * kFpuRegisterSize : 0;
 
-  // We subtract one from the volatile cpu register count because, even though
-  // LR is volatile, it is pushed ahead of FP.
+  COMPILE_ASSERT(PP < FP);
+  COMPILE_ASSERT((kDartVolatileCpuRegs & (1 << PP)) == 0);
+  // kVolatileCpuRegCount +1 for PP, -1 because even though LR is volatile,
+  // it is pushed ahead of FP.
   const intptr_t kPushedRegistersSize =
-      (kDartVolatileCpuRegCount - 1) * kWordSize + kPushedFpuRegisterSize;
+      kDartVolatileCpuRegCount * kWordSize + kPushedFpuRegisterSize;
   AddImmediate(SP, FP, -kPushedRegistersSize);
 
   // Restore all volatile FPU registers.
@@ -3304,7 +3297,7 @@ void Assembler::LeaveCallRuntimeFrame() {
   }
 
   // Restore volatile CPU registers.
-  LeaveFrame(kDartVolatileCpuRegs | (1 << FP));
+  LeaveFrame(kDartVolatileCpuRegs | (1 << PP) | (1 << FP));
 }
 
 
@@ -3396,6 +3389,7 @@ void Assembler::LoadAllocationStatsAddress(Register dest,
   ASSERT(cid > 0);
   const intptr_t class_offset = ClassTable::ClassOffsetFor(cid);
   if (inline_isolate) {
+    ASSERT(FLAG_allow_absolute_addresses);
     ClassTable* class_table = Isolate::Current()->class_table();
     ClassHeapStats** table_ptr = class_table->TableAddressFor(cid);
     if (cid < kNumPredefinedCids) {

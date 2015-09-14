@@ -353,14 +353,9 @@ BENCHMARK(Dart2JSCompileAll) {
   char* dart_root = ComputeDart2JSPath(Benchmark::Executable());
   char* script = NULL;
   if (dart_root != NULL) {
-    Isolate* isolate = Isolate::Current();
-    HANDLESCOPE(isolate);
-    const char* kFormatStr =
-        "import '%s/pkg/compiler/lib/compiler.dart';";
-    intptr_t len = OS::SNPrint(NULL, 0, kFormatStr, dart_root) + 1;
-    script = reinterpret_cast<char*>(malloc(len));
-    EXPECT(script != NULL);
-    OS::SNPrint(script, len, kFormatStr, dart_root);
+    HANDLESCOPE(thread);
+    script = OS::SCreate(NULL,
+        "import '%s/pkg/compiler/lib/compiler.dart';", dart_root);
     Dart_Handle lib = TestCase::LoadTestScript(
         script,
         reinterpret_cast<Dart_NativeEntryResolver>(NativeResolver));
@@ -502,7 +497,10 @@ BENCHMARK_SIZE(CoreSnapshotSize) {
   // Write snapshot with object content.
   FullSnapshotWriter writer(&vm_isolate_snapshot_buffer,
                             &isolate_snapshot_buffer,
-                            &malloc_allocator);
+                            NULL, /* instructions_snapshot_buffer */
+                            &malloc_allocator,
+                            false, /* snapshot_code */
+                            true /* vm_isolate_is_symbolic */);
   writer.WriteFullSnapshot();
   const Snapshot* snapshot = Snapshot::SetupFromBuffer(isolate_snapshot_buffer);
   ASSERT(snapshot->kind() == Snapshot::kFull);
@@ -536,7 +534,10 @@ BENCHMARK_SIZE(StandaloneSnapshotSize) {
   // Write snapshot with object content.
   FullSnapshotWriter writer(&vm_isolate_snapshot_buffer,
                             &isolate_snapshot_buffer,
-                            &malloc_allocator);
+                            NULL, /* instructions_snapshot_buffer */
+                            &malloc_allocator,
+                            false, /* snapshot_code */
+                            true /* vm_isolate_is_symbolic */);
   writer.WriteFullSnapshot();
   const Snapshot* snapshot = Snapshot::SetupFromBuffer(isolate_snapshot_buffer);
   ASSERT(snapshot->kind() == Snapshot::kFull);
@@ -593,12 +594,11 @@ static uint8_t* message_allocator(
 BENCHMARK(SerializeNull) {
   const Object& null_object = Object::Handle();
   const intptr_t kLoopCount = 1000000;
-  Isolate* isolate = Isolate::Current();
   uint8_t* buffer;
   Timer timer(true, "Serialize Null");
   timer.Start();
   for (intptr_t i = 0; i < kLoopCount; i++) {
-    StackZone zone(isolate);
+    StackZone zone(thread);
     MessageWriter writer(&buffer, &message_allocator, true);
     writer.WriteMessage(null_object);
     intptr_t buffer_len = writer.BytesWritten();
@@ -606,8 +606,7 @@ BENCHMARK(SerializeNull) {
     // Read object back from the snapshot.
     MessageSnapshotReader reader(buffer,
                                  buffer_len,
-                                 isolate,
-                                 zone.GetZone());
+                                 thread);
     reader.ReadObject();
   }
   timer.Stop();
@@ -619,12 +618,11 @@ BENCHMARK(SerializeNull) {
 BENCHMARK(SerializeSmi) {
   const Integer& smi_object = Integer::Handle(Smi::New(42));
   const intptr_t kLoopCount = 1000000;
-  Isolate* isolate = Isolate::Current();
   uint8_t* buffer;
   Timer timer(true, "Serialize Smi");
   timer.Start();
   for (intptr_t i = 0; i < kLoopCount; i++) {
-    StackZone zone(isolate);
+    StackZone zone(thread);
     MessageWriter writer(&buffer, &message_allocator, true);
     writer.WriteMessage(smi_object);
     intptr_t buffer_len = writer.BytesWritten();
@@ -632,8 +630,7 @@ BENCHMARK(SerializeSmi) {
     // Read object back from the snapshot.
     MessageSnapshotReader reader(buffer,
                                  buffer_len,
-                                 isolate,
-                                 zone.GetZone());
+                                 thread);
     reader.ReadObject();
   }
   timer.Stop();
@@ -647,12 +644,11 @@ BENCHMARK(SimpleMessage) {
   array_object.SetAt(0, Integer::Handle(Smi::New(42)));
   array_object.SetAt(1, Object::Handle());
   const intptr_t kLoopCount = 1000000;
-  Isolate* isolate = Isolate::Current();
   uint8_t* buffer;
   Timer timer(true, "Simple Message");
   timer.Start();
   for (intptr_t i = 0; i < kLoopCount; i++) {
-    StackZone zone(isolate);
+    StackZone zone(thread);
     MessageWriter writer(&buffer, &malloc_allocator, true);
     writer.WriteMessage(array_object);
     intptr_t buffer_len = writer.BytesWritten();
@@ -660,8 +656,7 @@ BENCHMARK(SimpleMessage) {
     // Read object back from the snapshot.
     MessageSnapshotReader reader(buffer,
                                  buffer_len,
-                                 isolate,
-                                 zone.GetZone());
+                                 thread);
     reader.ReadObject();
     free(buffer);
   }
@@ -685,12 +680,11 @@ BENCHMARK(LargeMap) {
   Instance& map = Instance::Handle();
   map ^= Api::UnwrapHandle(h_result);
   const intptr_t kLoopCount = 100;
-  Isolate* isolate = Isolate::Current();
   uint8_t* buffer;
   Timer timer(true, "Large Map");
   timer.Start();
   for (intptr_t i = 0; i < kLoopCount; i++) {
-    StackZone zone(isolate);
+    StackZone zone(thread);
     MessageWriter writer(&buffer, &malloc_allocator, true);
     writer.WriteMessage(map);
     intptr_t buffer_len = writer.BytesWritten();
@@ -698,8 +692,7 @@ BENCHMARK(LargeMap) {
     // Read object back from the snapshot.
     MessageSnapshotReader reader(buffer,
                                  buffer_len,
-                                 isolate,
-                                 zone.GetZone());
+                                 thread);
     reader.ReadObject();
     free(buffer);
   }

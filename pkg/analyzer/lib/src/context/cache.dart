@@ -12,7 +12,6 @@ import 'package:analyzer/src/generated/engine.dart'
 import 'package:analyzer/src/generated/java_engine.dart';
 import 'package:analyzer/src/generated/source.dart';
 import 'package:analyzer/src/generated/utilities_collection.dart';
-import 'package:analyzer/src/generated/utilities_general.dart';
 import 'package:analyzer/src/task/model.dart';
 import 'package:analyzer/task/model.dart';
 
@@ -466,8 +465,11 @@ class CacheEntry {
    * Set the value of the result represented by the given [descriptor] to the
    * given [value].
    */
-  /*<V>*/ void setValue(ResultDescriptor /*<V>*/ descriptor, dynamic /*V*/
-      value, List<TargetedResult> dependedOn) {
+  /*<V>*/ void setValue(
+      ResultDescriptor /*<V>*/ descriptor,
+      dynamic /*V*/
+      value,
+      List<TargetedResult> dependedOn) {
 //    {
 //      String valueStr = '$value';
 //      if (valueStr.length > 20) {
@@ -539,7 +541,7 @@ class CacheEntry {
     TargetedResult thisResult = new TargetedResult(target, descriptor);
     for (TargetedResult dependedOnResult in thisData.dependedOnResults) {
       ResultData data = _partition._getDataFor(dependedOnResult);
-      if (data != null) {
+      if (data != null && deltaResult != DeltaResult.KEEP_CONTINUE) {
         data.dependentResults.remove(thisResult);
       }
     }
@@ -1114,46 +1116,6 @@ class SdkCachePartition extends CachePartition {
     Source source = target.source;
     return source != null && source.isInSystemLibrary;
   }
-}
-
-/**
- * A specification of a specific result computed for a specific target.
- */
-class TargetedResult {
-  /**
-   * An empty list of results.
-   */
-  static final List<TargetedResult> EMPTY_LIST = const <TargetedResult>[];
-
-  /**
-   * The target with which the result is associated.
-   */
-  final AnalysisTarget target;
-
-  /**
-   * The result associated with the target.
-   */
-  final ResultDescriptor result;
-
-  /**
-   * Initialize a new targeted result.
-   */
-  TargetedResult(this.target, this.result);
-
-  @override
-  int get hashCode {
-    return JenkinsSmiHash.combine(target.hashCode, result.hashCode);
-  }
-
-  @override
-  bool operator ==(other) {
-    return other is TargetedResult &&
-        other.target == target &&
-        other.result == result;
-  }
-
-  @override
-  String toString() => '$result for $target';
 }
 
 /**

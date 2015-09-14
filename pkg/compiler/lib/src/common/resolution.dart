@@ -9,7 +9,8 @@ import '../compiler.dart' show
 import '../dart_types.dart' show
     DartType;
 import '../elements/elements.dart' show
-    AstElement;
+    AstElement,
+    ErroneousElement;
 import '../enqueue.dart' show
     ResolutionEnqueuer,
     WorldImpact;
@@ -94,6 +95,9 @@ class ResolutionCallbacks {
   /// Register that the application may throw a [RuntimeError].
   void onThrowRuntimeError(Registry registry) {}
 
+  /// Register that the application has a compile time error.
+  void onCompileTimeError(Registry registry, ErroneousElement error) {}
+
   /// Register that the application may throw an
   /// [AbstractClassInstantiationError].
   void onAbstractClassInstantiation(Registry registry) {}
@@ -110,4 +114,7 @@ class ResolutionCallbacks {
 
   /// Called when resolving the `Symbol` constructor.
   void onSymbolConstructor(Registry registry) {}
+
+  /// Called when resolving a prefix or postfix expression.
+  void onIncDecOperation(Registry registry) {}
 }

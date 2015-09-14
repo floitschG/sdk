@@ -207,7 +207,7 @@ void StubCode::GenerateCallNativeCFunctionStub(Assembler* assembler) {
   __ LoadImmediate(T9, entry);
   __ jalr(T9);
 #else
-  __ BranchLink(&NativeEntry::NativeCallWrapperLabel());
+  __ BranchLink(&NativeEntry::NativeCallWrapperLabel(), kNotPatchable);
 #endif
   __ Comment("CallNativeCFunctionStub return");
 
@@ -316,7 +316,7 @@ void StubCode::GenerateCallStaticFunctionStub(Assembler* assembler) {
 
   __ addiu(SP, SP, Immediate(-2 * kWordSize));
   __ sw(S4, Address(SP, 1 * kWordSize));
-  __ LoadImmediate(TMP, reinterpret_cast<intptr_t>(Object::null()));
+  __ LoadObject(TMP, Object::null_object());
   __ sw(TMP, Address(SP, 0 * kWordSize));
 
   __ CallRuntime(kPatchStaticCallRuntimeEntry, 0);
@@ -327,8 +327,7 @@ void StubCode::GenerateCallStaticFunctionStub(Assembler* assembler) {
   __ lw(S4, Address(SP, 1 * kWordSize));
   __ addiu(SP, SP, Immediate(2 * kWordSize));
 
-  __ lw(T0, FieldAddress(T0, Code::instructions_offset()));
-  __ AddImmediate(T0, Instructions::HeaderSize() - kHeapObjectTag);
+  __ lw(T0, FieldAddress(T0, Code::entry_point_offset()));
 
   // Remove the stub frame as we are about to jump to the dart function.
   __ LeaveStubFrameAndReturn(T0);
@@ -346,7 +345,7 @@ void StubCode::GenerateFixCallersTargetStub(Assembler* assembler) {
   // Setup space on stack for return value and preserve arguments descriptor.
   __ addiu(SP, SP, Immediate(-2 * kWordSize));
   __ sw(S4, Address(SP, 1 * kWordSize));
-  __ LoadImmediate(TMP, reinterpret_cast<intptr_t>(Object::null()));
+  __ LoadObject(TMP, Object::null_object());
   __ sw(TMP, Address(SP, 0 * kWordSize));
   __ CallRuntime(kFixCallersTargetRuntimeEntry, 0);
   // Get Code object result and restore arguments descriptor array.
@@ -355,8 +354,7 @@ void StubCode::GenerateFixCallersTargetStub(Assembler* assembler) {
   __ addiu(SP, SP, Immediate(2 * kWordSize));
 
   // Jump to the dart function.
-  __ lw(T0, FieldAddress(T0, Code::instructions_offset()));
-  __ AddImmediate(T0, T0, Instructions::HeaderSize() - kHeapObjectTag);
+  __ lw(T0, FieldAddress(T0, Code::entry_point_offset()));
 
   // Remove the stub frame.
   __ LeaveStubFrameAndReturn(T0);
@@ -370,7 +368,7 @@ void StubCode::GenerateFixAllocationStubTargetStub(Assembler* assembler) {
   __ EnterStubFrame();
   // Setup space on stack for return value.
   __ addiu(SP, SP, Immediate(-1 * kWordSize));
-  __ LoadImmediate(TMP, reinterpret_cast<intptr_t>(Object::null()));
+  __ LoadObject(TMP, Object::null_object());
   __ sw(TMP, Address(SP, 0 * kWordSize));
   __ CallRuntime(kFixAllocationStubTargetRuntimeEntry, 0);
   // Get Code object result.
@@ -378,8 +376,7 @@ void StubCode::GenerateFixAllocationStubTargetStub(Assembler* assembler) {
   __ addiu(SP, SP, Immediate(1 * kWordSize));
 
   // Jump to the dart function.
-  __ lw(T0, FieldAddress(T0, Code::instructions_offset()));
-  __ AddImmediate(T0, T0, Instructions::HeaderSize() - kHeapObjectTag);
+  __ lw(T0, FieldAddress(T0, Code::entry_point_offset()));
 
   // Remove the stub frame.
   __ LeaveStubFrameAndReturn(T0);
@@ -392,7 +389,7 @@ void StubCode::GenerateFixAllocationStubTargetStub(Assembler* assembler) {
 static void PushArgumentsArray(Assembler* assembler) {
   __ Comment("PushArgumentsArray");
   // Allocate array to store arguments of caller.
-  __ LoadImmediate(A0, reinterpret_cast<intptr_t>(Object::null()));
+  __ LoadObject(A0, Object::null_object());
   // A0: Null element type for raw Array.
   // A1: Smi-tagged argument count, may be zero.
   __ BranchLink(*StubCode::AllocateArray_entry());
@@ -419,13 +416,6 @@ static void PushArgumentsArray(Assembler* assembler) {
   __ delay_slot()->sw(T3, Address(T2, -kWordSize));
   __ Bind(&loop_exit);
 }
-
-
-DECLARE_LEAF_RUNTIME_ENTRY(intptr_t, DeoptimizeCopyFrame,
-                           intptr_t deopt_reason,
-                           uword saved_registers_address);
-
-DECLARE_LEAF_RUNTIME_ENTRY(void, DeoptimizeFillFrame, uword last_fp);
 
 
 // Used by eager and lazy deoptimization. Preserve result in V0 if necessary.
@@ -470,6 +460,8 @@ static void GenerateDeoptimizationSequence(Assembler* assembler,
   __ sw(PP, Address(SP, kPushedRegistersSize - 4 * kWordSize));
   __ addiu(FP, SP, Immediate(kPushedRegistersSize - 3 * kWordSize));
 
+  __ LoadPoolPointer();
+
   // The code in this frame may not cause GC. kDeoptimizeCopyFrameRuntimeEntry
   // and kDeoptimizeFillFrameRuntimeEntry are leaf runtime calls.
   const intptr_t saved_result_slot_from_fp =
@@ -500,20 +492,12 @@ static void GenerateDeoptimizationSequence(Assembler* assembler,
     __ lw(T1, Address(FP, saved_result_slot_from_fp * kWordSize));
   }
 
-  __ addiu(SP, FP, Immediate(-kWordSize));
-  __ lw(RA, Address(SP, 2 * kWordSize));
-  __ lw(FP, Address(SP, 1 * kWordSize));
-  __ lw(PP, Address(SP, 0 * kWordSize));
+  __ LeaveDartFrame();
   __ subu(SP, FP, V0);
 
   // DeoptimizeFillFrame expects a Dart frame, i.e. EnterDartFrame(0), but there
   // is no need to set the correct PC marker or load PP, since they get patched.
-  __ addiu(SP, SP, Immediate(-4 * kWordSize));
-  __ sw(ZR, Address(SP, 3 * kWordSize));
-  __ sw(RA, Address(SP, 2 * kWordSize));
-  __ sw(FP, Address(SP, 1 * kWordSize));
-  __ sw(PP, Address(SP, 0 * kWordSize));
-  __ addiu(FP, SP, Immediate(kWordSize));
+  __ EnterStubFrame();
 
   __ mov(A0, FP);  // Get last FP address.
   if (preserve_result) {
@@ -526,11 +510,7 @@ static void GenerateDeoptimizationSequence(Assembler* assembler,
     __ lw(T1, Address(FP, kFirstLocalSlotFromFp * kWordSize));
   }
   // Code above cannot cause GC.
-  __ addiu(SP, FP, Immediate(-kWordSize));
-  __ lw(RA, Address(SP, 2 * kWordSize));
-  __ lw(FP, Address(SP, 1 * kWordSize));
-  __ lw(PP, Address(SP, 0 * kWordSize));
-  __ addiu(SP, SP, Immediate(4 * kWordSize));
+  __ LeaveStubFrame();
 
   // Frame is fully rewritten at this point and it is safe to perform a GC.
   // Materialize any objects that were deferred by FillFrame because they
@@ -588,7 +568,7 @@ static void GenerateDispatcherCode(Assembler* assembler,
   // Push arguments descriptor array.
   // Push original arguments array.
   __ addiu(SP, SP, Immediate(-4 * kWordSize));
-  __ LoadImmediate(TMP, reinterpret_cast<intptr_t>(Object::null()));
+  __ LoadObject(TMP, Object::null_object());
   __ sw(TMP, Address(SP, 3 * kWordSize));
   __ sw(T6, Address(SP, 2 * kWordSize));
   __ sw(S5, Address(SP, 1 * kWordSize));
@@ -622,7 +602,7 @@ void StubCode::GenerateMegamorphicMissStub(Assembler* assembler) {
   // Push the receiver.
   // Push IC data object.
   // Push arguments descriptor array.
-  __ LoadImmediate(TMP, reinterpret_cast<intptr_t>(Object::null()));
+  __ LoadObject(TMP, Object::null_object());
   __ sw(TMP, Address(SP, 3 * kWordSize));
   __ sw(T6, Address(SP, 2 * kWordSize));
   __ sw(S5, Address(SP, 1 * kWordSize));
@@ -643,8 +623,7 @@ void StubCode::GenerateMegamorphicMissStub(Assembler* assembler) {
     __ Bind(&call_target_function);
   }
 
-  __ lw(T2, FieldAddress(T0, Function::instructions_offset()));
-  __ AddImmediate(T2, Instructions::HeaderSize() - kHeapObjectTag);
+  __ lw(T2, FieldAddress(T0, Function::entry_point_offset()));
   __ jr(T2);
 }
 
@@ -752,7 +731,7 @@ void StubCode::GenerateAllocateArrayStub(Assembler* assembler) {
                               FieldAddress(T0, Array::length_offset()),
                               A1);
 
-  __ LoadImmediate(T7, reinterpret_cast<int32_t>(Object::null()));
+  __ LoadObject(T7, Object::null_object());
   // Initialize all array elements to raw_null.
   // T0: new object start as a tagged pointer.
   // T1: new object end address.
@@ -782,7 +761,7 @@ void StubCode::GenerateAllocateArrayStub(Assembler* assembler) {
   // Setup space on stack for return value.
   // Push array length as Smi and element type.
   __ addiu(SP, SP, Immediate(-3 * kWordSize));
-  __ LoadImmediate(TMP, reinterpret_cast<intptr_t>(Object::null()));
+  __ LoadObject(TMP, Object::null_object());
   __ sw(TMP, Address(SP, 2 * kWordSize));
   __ sw(A1, Address(SP, 1 * kWordSize));
   __ sw(A0, Address(SP, 0 * kWordSize));
@@ -957,6 +936,8 @@ void StubCode::GenerateAllocateContextStub(Assembler* assembler) {
     __ LoadImmediate(T0, ~((kObjectAlignment) - 1));
     __ and_(T2, T2, T0);
 
+    __ MaybeTraceAllocation(kContextCid, T4, &slow_case,
+                            /* inline_isolate = */ false);
     // Now allocate the object.
     // T1: number of context variables.
     // T2: object size.
@@ -1014,7 +995,7 @@ void StubCode::GenerateAllocateContextStub(Assembler* assembler) {
     // T1: number of context variables as integer value (not object).
     __ sw(T1, FieldAddress(V0, Context::num_variables_offset()));
 
-    __ LoadImmediate(T7, reinterpret_cast<intptr_t>(Object::null()));
+    __ LoadObject(T7, Object::null_object());
 
     // Initialize the context variables.
     // V0: new object.
@@ -1044,7 +1025,7 @@ void StubCode::GenerateAllocateContextStub(Assembler* assembler) {
   // Setup space on stack for return value.
   __ SmiTag(T1);
   __ addiu(SP, SP, Immediate(-2 * kWordSize));
-  __ LoadImmediate(TMP, reinterpret_cast<intptr_t>(Object::null()));
+  __ LoadObject(TMP, Object::null_object());
   __ sw(TMP, Address(SP, 1 * kWordSize));  // Store null.
   __ sw(T1, Address(SP, 0 * kWordSize));
   __ CallRuntime(kAllocateContextRuntimeEntry, 1);  // Allocate context.
@@ -1055,9 +1036,6 @@ void StubCode::GenerateAllocateContextStub(Assembler* assembler) {
   // Restore the frame pointer.
   __ LeaveStubFrameAndReturn();
 }
-
-
-DECLARE_LEAF_RUNTIME_ENTRY(void, StoreBufferBlockProcess, Isolate* isolate);
 
 
 // Helper stub to implement Assembler::StoreIntoObject.
@@ -1151,8 +1129,9 @@ void StubCode::GenerateAllocationStubForClass(
     __ lw(T1, Address(SP, 0 * kWordSize));
     // T1: type arguments.
   }
+  Isolate* isolate = Isolate::Current();
   if (FLAG_inline_alloc && Heap::IsAllocatableInNewSpace(instance_size) &&
-      !cls.trace_allocation()) {
+      !cls.TraceAllocation(isolate)) {
     Label slow_case;
     // Allocate the object and update top to point to
     // next object start and initialize the allocated object.
@@ -1188,7 +1167,7 @@ void StubCode::GenerateAllocationStubForClass(
     __ LoadImmediate(T0, tags);
     __ sw(T0, Address(T2, Instance::tags_offset()));
 
-    __ LoadImmediate(T7, reinterpret_cast<intptr_t>(Object::null()));
+    __ LoadObject(T7, Object::null_object());
 
     // Initialize the remaining words of the object.
     // T2: new object start.
@@ -1239,7 +1218,7 @@ void StubCode::GenerateAllocationStubForClass(
 
   __ addiu(SP, SP, Immediate(-3 * kWordSize));
   // Space on stack for return value.
-  __ LoadImmediate(T7, reinterpret_cast<intptr_t>(Object::null()));
+  __ LoadObject(T7, Object::null_object());
   __ sw(T7, Address(SP, 2 * kWordSize));
   __ sw(TMP, Address(SP, 1 * kWordSize));  // Class of object to be allocated.
 
@@ -1284,7 +1263,7 @@ void StubCode::GenerateCallClosureNoSuchMethodStub(Assembler* assembler) {
   // Push arguments descriptor array.
   const intptr_t kNumArgs = 3;
   __ addiu(SP, SP, Immediate(-kNumArgs * kWordSize));
-  __ LoadImmediate(TMP, reinterpret_cast<intptr_t>(Object::null()));
+  __ LoadObject(TMP, Object::null_object());
   __ sw(TMP, Address(SP, 2 * kWordSize));
   __ sw(T6, Address(SP, 1 * kWordSize));
   __ sw(S4, Address(SP, 0 * kWordSize));
@@ -1560,7 +1539,7 @@ void StubCode::GenerateNArgsCheckInlineCacheStub(
   __ addiu(SP, SP, Immediate(-num_slots * kWordSize));
   __ sw(S5, Address(SP, (num_slots - 1) * kWordSize));
   __ sw(S4, Address(SP, (num_slots - 2) * kWordSize));
-  __ LoadImmediate(TMP, reinterpret_cast<intptr_t>(Object::null()));
+  __ LoadObject(TMP, Object::null_object());
   __ sw(TMP, Address(SP, (num_slots - 3) * kWordSize));
   // Push call arguments.
   for (intptr_t i = 0; i < num_args; i++) {
@@ -1611,8 +1590,7 @@ void StubCode::GenerateNArgsCheckInlineCacheStub(
   // T0 <- T3: Target function.
   __ mov(T0, T3);
   Label is_compiled;
-  __ lw(T4, FieldAddress(T0, Function::instructions_offset()));
-  __ AddImmediate(T4, Instructions::HeaderSize() - kHeapObjectTag);
+  __ lw(T4, FieldAddress(T0, Function::entry_point_offset()));
   if (range_collection_mode == kCollectRanges) {
     const intptr_t frame_size = num_args + 2;
     __ lw(T3, Address(SP, 0 * kWordSize));
@@ -1796,10 +1774,7 @@ void StubCode::GenerateZeroArgsUnoptimizedStaticCallStub(Assembler* assembler) {
 
   // Get function and call it, if possible.
   __ lw(T0, Address(T0, target_offset));
-  __ lw(T4, FieldAddress(T0, Function::instructions_offset()));
-
-  // T4: target instructions.
-  __ AddImmediate(T4, Instructions::HeaderSize() - kHeapObjectTag);
+  __ lw(T4, FieldAddress(T0, Function::entry_point_offset()));
   __ jr(T4);
 
   // Call single step callback in debugger.
@@ -1852,8 +1827,7 @@ void StubCode::GenerateLazyCompileStub(Assembler* assembler) {
   __ addiu(SP, SP, Immediate(3 * kWordSize));
   __ LeaveStubFrame();
 
-  __ lw(T2, FieldAddress(T0, Function::instructions_offset()));
-  __ AddImmediate(T2, Instructions::HeaderSize() - kHeapObjectTag);
+  __ lw(T2, FieldAddress(T0, Function::entry_point_offset()));
   __ jr(T2);
 }
 
@@ -1864,7 +1838,7 @@ void StubCode::GenerateICCallBreakpointStub(Assembler* assembler) {
   __ EnterStubFrame();
   __ addiu(SP, SP, Immediate(-2 * kWordSize));
   __ sw(S5, Address(SP, 1 * kWordSize));
-  __ LoadImmediate(TMP, reinterpret_cast<intptr_t>(Object::null()));
+  __ LoadObject(TMP, Object::null_object());
   __ sw(TMP, Address(SP, 0 * kWordSize));
 
   __ CallRuntime(kBreakpointRuntimeHandlerRuntimeEntry, 0);
@@ -1881,7 +1855,7 @@ void StubCode::GenerateRuntimeCallBreakpointStub(Assembler* assembler) {
   __ Comment("RuntimeCallBreakpoint stub");
   __ EnterStubFrame();
   __ addiu(SP, SP, Immediate(-1 * kWordSize));
-  __ LoadImmediate(TMP, reinterpret_cast<intptr_t>(Object::null()));
+  __ LoadObject(TMP, Object::null_object());
   __ sw(TMP, Address(SP, 0 * kWordSize));
 
   __ CallRuntime(kBreakpointRuntimeHandlerRuntimeEntry, 0);
@@ -1932,7 +1906,7 @@ static void GenerateSubtypeNTestCacheStub(Assembler* assembler, int n) {
     __ LoadClass(T0, A0);
     // Compute instance type arguments into T1.
     Label has_no_type_arguments;
-    __ LoadImmediate(T1, reinterpret_cast<intptr_t>(Object::null()));
+    __ LoadObject(T1, Object::null_object());
     __ lw(T2, FieldAddress(T0,
         Class::type_arguments_field_offset_in_words_offset()));
     __ BranchEqual(
@@ -1951,7 +1925,7 @@ static void GenerateSubtypeNTestCacheStub(Assembler* assembler, int n) {
   __ lw(T2, FieldAddress(A2, SubtypeTestCache::cache_offset()));
   __ AddImmediate(T2, Array::data_offset() - kHeapObjectTag);
 
-  __ LoadImmediate(T7, reinterpret_cast<intptr_t>(Object::null()));
+  __ LoadObject(T7, Object::null_object());
 
   Label loop, found, not_found, next_iteration;
   // T0: instance class id.
@@ -2074,7 +2048,7 @@ void StubCode::GenerateOptimizeFunctionStub(Assembler* assembler) {
   __ addiu(SP, SP, Immediate(-3 * kWordSize));
   __ sw(S4, Address(SP, 2 * kWordSize));
   // Setup space on stack for return value.
-  __ LoadImmediate(TMP, reinterpret_cast<intptr_t>(Object::null()));
+  __ LoadObject(TMP, Object::null_object());
   __ sw(TMP, Address(SP, 1 * kWordSize));
   __ sw(T0, Address(SP, 0 * kWordSize));
   __ CallRuntime(kOptimizeInvokedFunctionRuntimeEntry, 1);
@@ -2083,17 +2057,10 @@ void StubCode::GenerateOptimizeFunctionStub(Assembler* assembler) {
   __ lw(S4, Address(SP, 2 * kWordSize));  // Restore argument descriptor.
   __ addiu(SP, SP, Immediate(3 * kWordSize));  // Discard argument.
 
-  __ lw(T0, FieldAddress(T0, Code::instructions_offset()));
-  __ AddImmediate(T0, Instructions::HeaderSize() - kHeapObjectTag);
+  __ lw(T0, FieldAddress(T0, Code::entry_point_offset()));
   __ LeaveStubFrameAndReturn(T0);
   __ break_(0);
 }
-
-
-DECLARE_LEAF_RUNTIME_ENTRY(intptr_t,
-                           BigintCompare,
-                           RawBigint* left,
-                           RawBigint* right);
 
 
 // Does identical check (object references are equal or not equal) with special
@@ -2271,10 +2238,7 @@ void StubCode::EmitMegamorphicLookup(
   __ addu(T1, T2, T1);
   __ lw(T0, FieldAddress(T1, base + kWordSize));
 
-  __ lw(target, FieldAddress(T0, Function::instructions_offset()));
-  // TODO(srdjan): Evaluate performance impact of moving the instruction below
-  // to the call site, instead of having it here.
-  __ AddImmediate(target, Instructions::HeaderSize() - kHeapObjectTag);
+  __ lw(target, FieldAddress(T0, Function::entry_point_offset()));
 }
 
 

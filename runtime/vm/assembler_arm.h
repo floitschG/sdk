@@ -608,22 +608,16 @@ class Assembler : public ValueObject {
 
   // Macros.
   // Branch to an entry address. Call sequence is never patched.
-  void Branch(const ExternalLabel* label, Condition cond = AL);
   void Branch(const StubEntry& stub_entry, Condition cond = AL);
 
   // Branch to an entry address. Call sequence can be patched or even replaced.
-  void BranchPatchable(const ExternalLabel* label);
   void BranchPatchable(const StubEntry& stub_entry);
 
-  // Branch and link to an entry address. Call sequence is never patched.
-  void BranchLink(const ExternalLabel* label);
-  void BranchLink(const StubEntry& stub_entry);
-
+  void BranchLink(const StubEntry& stub_entry,
+                  Patchability patchable = kNotPatchable);
   void BranchLink(const ExternalLabel* label, Patchability patchable);
-  void BranchLink(const StubEntry& stub_entry, Patchability patchable);
 
   // Branch and link to an entry address. Call sequence can be patched.
-  void BranchLinkPatchable(const ExternalLabel* label);
   void BranchLinkPatchable(const StubEntry& stub_entry);
 
   // Branch and link to [base + offset]. Call sequence is never patched.
@@ -677,6 +671,10 @@ class Assembler : public ValueObject {
                          const ExternalLabel* label,
                          Patchability patchable,
                          Condition cond = AL);
+  void LoadNativeEntry(Register dst,
+                       const ExternalLabel* label,
+                       Patchability patchable,
+                       Condition cond = AL);
   void PushObject(const Object& object);
   void CompareObject(Register rn, const Object& object);
 
@@ -762,7 +760,6 @@ class Assembler : public ValueObject {
                            Label* miss);
 
   intptr_t FindImmediate(int32_t imm);
-  void LoadWordFromPoolOffset(Register rd, int32_t offset, Condition cond = AL);
   void LoadFromOffset(OperandSize type,
                       Register reg,
                       Register base,
@@ -995,6 +992,10 @@ class Assembler : public ValueObject {
 
   void BindARMv6(Label* label);
   void BindARMv7(Label* label);
+
+  void BranchLink(const ExternalLabel* label);
+
+  void LoadWordFromPoolOffset(Register rd, int32_t offset, Condition cond);
 
   class CodeComment : public ZoneAllocated {
    public:

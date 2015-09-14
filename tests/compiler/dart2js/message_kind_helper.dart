@@ -7,6 +7,7 @@ library dart2js.test.message_kind_helper;
 import 'package:expect/expect.dart';
 import 'dart:async';
 
+import 'package:compiler/src/commandline_options.dart';
 import 'package:compiler/src/compiler.dart' show
     Compiler;
 import 'package:compiler/src/dart_backend/dart_backend.dart' show
@@ -82,10 +83,10 @@ Future<Compiler> check(MessageTemplate template, Compiler cachedCompiler) {
     bool newBackendIsDart = template.options.contains('--output-type=dart');
 
     Compiler compiler = compilerFor(
-        example,
+        memorySourceFiles: example,
         diagnosticHandler: new LegacyCompilerDiagnostics(collect),
-        options: ['--analyze-only',
-                  '--enable-experimental-mirrors']..addAll(template.options),
+        options: [Flags.analyzeOnly,
+                  Flags.enableExperimentalMirrors]..addAll(template.options),
         cachedCompiler:
              // TODO(johnniwinther): Remove this restriction when constant
              // values can be computed directly from the expressions.

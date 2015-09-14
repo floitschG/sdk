@@ -21,6 +21,7 @@ element_animate_test/simple_timing: Fail # Not supported on Dartium
 element_animate_test/omit_timing: Fail # Not supported on Dartium
 element_animate_test/timing_dict: Fail # Not supported on Dartium
 trusted_html_tree_sanitizer_test/untrusted: Fail # We make adoptNode throw to verify it's not being called. That doesn't work on Dartium.
+resource_http_test: Fail # Issue 24203
 
 [ $compiler == none && $mode == debug && ($runtime == drt || $runtime == dartium || $runtime == ContentShellOnAndroid) ]
 datalistelement_test: Skip # Issue 20540
@@ -114,6 +115,11 @@ element_animate_test/omit_timing: Skip # Timing out on MacOS. Issue 23507
 element_animate_test/timing_dict: Skip # Timing out on MacOS. Issue 23507
 transition_event_test/functional: Skip # Times out. Issue 22167
 request_animation_frame_test: Skip # Times out. Issue 22167
+
+[ $runtime == chrome && $system != linux ]
+# These are failures in Chrome 45, which is not yet on Linux.
+# This will be merged with the earlier blocks when Linux is updated.
+element_animate_test/simple_timing: RuntimeError # Please triage this failure
 
 [$runtime == drt || $runtime == dartium || $runtime == chrome || $runtime == chromeOnAndroid || $runtime == ContentShellOnAndroid ]
 webgl_1_test: Pass, Fail # Issue 8219
@@ -418,3 +424,5 @@ typing_test: StaticWarning
 webgl_1_test: StaticWarning
 window_nosuchmethod_test: StaticWarning
 
+[ $compiler == dart2js && $cps_ir ]
+resource_http_test: Crash # (await for(var b in r.openRead()){bytes.addAll(b);}): await for

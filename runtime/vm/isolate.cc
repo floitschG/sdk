@@ -38,11 +38,16 @@
 #include "vm/thread_interrupter.h"
 #include "vm/thread_registry.h"
 #include "vm/timeline.h"
+#include "vm/timeline_analysis.h"
 #include "vm/timer.h"
 #include "vm/visitor.h"
 
 
 namespace dart {
+
+DECLARE_FLAG(bool, print_metrics);
+DECLARE_FLAG(bool, timing);
+DECLARE_FLAG(bool, trace_service);
 
 DEFINE_FLAG(bool, trace_isolates, false,
             "Trace isolate creation and shut down.");
@@ -53,13 +58,7 @@ DEFINE_FLAG(bool, pause_isolates_on_exit, false,
 DEFINE_FLAG(bool, break_at_isolate_spawn, false,
             "Insert a one-time breakpoint at the entrypoint for all spawned "
             "isolates");
-DEFINE_FLAG(charp, isolate_log_filter, NULL,
-            "Log isolates whose name include the filter. "
-            "Default: service isolate log messages are suppressed.");
 
-DEFINE_FLAG(charp, timeline_trace_dir, NULL,
-            "Enable all timeline trace streams and output traces "
-            "into specified directory.");
 DEFINE_FLAG(int, new_gen_semi_max_size, (kWordSize <= 4) ? 16 : 32,
             "Max size of new gen semi space in MB");
 DEFINE_FLAG(int, old_gen_heap_size, 0,
@@ -95,7 +94,8 @@ DEFINE_FLAG_HANDLER(CheckedModeHandler,
                     "Enable checked mode.");
 
 
-// Quick access to the locally defined isolate() method.
+// Quick access to the locally defined thread() and isolate() methods.
+#define T (thread())
 #define I (isolate())
 
 #if defined(DEBUG)
@@ -381,19 +381,24 @@ void IsolateMessageHandler::MessageNotify(Message::Priority priority) {
 
 
 bool IsolateMessageHandler::HandleMessage(Message* message) {
-  StackZone zone(I);
-  HandleScope handle_scope(I);
-  TimelineDurationScope tds(I, I->GetIsolateStream(), "HandleMessage");
+  ASSERT(IsCurrentIsolate());
+  Thread* thread = Thread::Current();
+  StackZone stack_zone(thread);
+  Zone* zone = stack_zone.GetZone();
+  HandleScope handle_scope(thread);
+  TimelineDurationScope tds(thread, I->GetIsolateStream(), "HandleMessage");
+  tds.SetNumArguments(1);
+  tds.CopyArgument(0, "isolateName", I->name());
 
   // TODO(turnidge): Rework collection total dart execution.  This can
   // overcount when other things (gc, compilation) are active.
-  TIMERSCOPE(isolate_, time_dart_execution);
+  TIMERSCOPE(thread, time_dart_execution);
 
   // If the message is in band we lookup the handler to dispatch to.  If the
   // receive port was closed, we drop the message without deserializing it.
   // Illegal port is a special case for artificially enqueued isolate library
   // messages which are handled in C++ code below.
-  Object& msg_handler = Object::Handle(I);
+  Object& msg_handler = Object::Handle(zone);
   if (!message->IsOOB() && (message->dest_port() != Message::kIllegalPort)) {
     msg_handler = DartLibraryCalls::LookupHandler(message->dest_port());
     if (msg_handler.IsError()) {
@@ -413,10 +418,8 @@ bool IsolateMessageHandler::HandleMessage(Message* message) {
   }
 
   // Parse the message.
-  MessageSnapshotReader reader(message->data(),
-                               message->len(),
-                               I, zone.GetZone());
-  const Object& msg_obj = Object::Handle(I, reader.ReadObject());
+  MessageSnapshotReader reader(message->data(), message->len(), thread);
+  const Object& msg_obj = Object::Handle(zone, reader.ReadObject());
   if (msg_obj.IsError()) {
     // An error occurred while reading the message.
     delete message;
@@ -431,7 +434,7 @@ bool IsolateMessageHandler::HandleMessage(Message* message) {
     UNREACHABLE();
   }
 
-  Instance& msg = Instance::Handle(I);
+  Instance& msg = Instance::Handle(zone);
   msg ^= msg_obj.raw();  // Can't use Instance::Cast because may be null.
 
   bool success = true;
@@ -442,7 +445,7 @@ bool IsolateMessageHandler::HandleMessage(Message* message) {
     if (msg.IsArray()) {
       const Array& oob_msg = Array::Cast(msg);
       if (oob_msg.Length() > 0) {
-        const Object& oob_tag = Object::Handle(I, oob_msg.At(0));
+        const Object& oob_tag = Object::Handle(zone, oob_msg.At(0));
         if (oob_tag.IsSmi()) {
           switch (Smi::Cast(oob_tag).Value()) {
             case Message::kServiceOOBMsg: {
@@ -471,7 +474,7 @@ bool IsolateMessageHandler::HandleMessage(Message* message) {
     if (msg.IsArray()) {
       const Array& msg_arr = Array::Cast(msg);
       if (msg_arr.Length() > 0) {
-        const Object& oob_tag = Object::Handle(I, msg_arr.At(0));
+        const Object& oob_tag = Object::Handle(zone, msg_arr.At(0));
         if (oob_tag.IsSmi() &&
             (Smi::Cast(oob_tag).Value() == Message::kDelayedIsolateLibOOBMsg)) {
           success = HandleLibMessage(Array::Cast(msg_arr));
@@ -479,7 +482,7 @@ bool IsolateMessageHandler::HandleMessage(Message* message) {
       }
     }
   } else {
-    const Object& result = Object::Handle(I,
+    const Object& result = Object::Handle(zone,
         DartLibraryCalls::HandleMessage(msg_handler, msg));
     if (result.IsError()) {
       success = ProcessUnhandledException(Error::Cast(result));
@@ -488,28 +491,43 @@ bool IsolateMessageHandler::HandleMessage(Message* message) {
     }
   }
   delete message;
+  if (success) {
+    const Object& result =
+        Object::Handle(zone, I->InvokePendingServiceExtensionCalls());
+    if (result.IsError()) {
+      success = ProcessUnhandledException(Error::Cast(result));
+    } else {
+      ASSERT(result.IsNull());
+    }
+  }
   return success;
 }
 
 
 void IsolateMessageHandler::NotifyPauseOnStart() {
   if (Service::debug_stream.enabled()) {
-    StartIsolateScope start_isolate(isolate());
-    StackZone zone(I);
-    HandleScope handle_scope(I);
-    ServiceEvent pause_event(isolate(), ServiceEvent::kPauseStart);
+    StartIsolateScope start_isolate(I);
+    StackZone zone(T);
+    HandleScope handle_scope(T);
+    ServiceEvent pause_event(I, ServiceEvent::kPauseStart);
     Service::HandleEvent(&pause_event);
+  } else if (FLAG_trace_service) {
+    OS::Print("vm-service: Dropping event of type PauseStart (%s)\n",
+              I->name());
   }
 }
 
 
 void IsolateMessageHandler::NotifyPauseOnExit() {
   if (Service::debug_stream.enabled()) {
-    StartIsolateScope start_isolate(isolate());
-    StackZone zone(I);
-    HandleScope handle_scope(I);
-    ServiceEvent pause_event(isolate(), ServiceEvent::kPauseExit);
+    StartIsolateScope start_isolate(I);
+    StackZone zone(T);
+    HandleScope handle_scope(T);
+    ServiceEvent pause_event(I, ServiceEvent::kPauseExit);
     Service::HandleEvent(&pause_event);
+  } else if (FLAG_trace_service) {
+    OS::Print("vm-service: Dropping event of type PauseExit (%s)\n",
+              I->name());
   }
 }
 
@@ -569,10 +587,14 @@ bool IsolateMessageHandler::ProcessUnhandledException(const Error& result) {
   } else {
     exc_str = String::New(result.ToErrorCString());
   }
-  I->NotifyErrorListeners(exc_str, stacktrace_str);
+  bool has_listener = I->NotifyErrorListeners(exc_str, stacktrace_str);
 
   if (I->ErrorsFatal()) {
-    I->object_store()->set_sticky_error(result);
+    if (has_listener) {
+      I->object_store()->clear_sticky_error();
+    } else {
+      I->object_store()->set_sticky_error(result);
+    }
     return false;
   }
   return true;
@@ -653,11 +675,11 @@ Isolate::Isolate(const Dart_IsolateFlags& api_flags)
       debugger_(NULL),
       single_step_(false),
       resume_request_(false),
+      last_resume_timestamp_(OS::GetCurrentTimeMillis()),
       has_compiled_(false),
       flags_(),
       random_(),
       simulator_(NULL),
-      long_jump_base_(NULL),
       timer_list_(),
       deopt_id_(0),
       mutex_(new Mutex()),
@@ -676,20 +698,20 @@ Isolate::Isolate(const Dart_IsolateFlags& api_flags)
       edge_counter_increment_size_(-1),
       compiler_stats_(NULL),
       is_service_isolate_(false),
-      log_(new class Log()),
       stacktrace_(NULL),
       stack_frame_index_(-1),
       last_allocationprofile_accumulator_reset_timestamp_(0),
       last_allocationprofile_gc_timestamp_(0),
       object_id_ring_(NULL),
       trace_buffer_(NULL),
-      timeline_event_recorder_(NULL),
       profiler_data_(NULL),
       tag_table_(GrowableObjectArray::null()),
       current_tag_(UserTag::null()),
       default_tag_(UserTag::null()),
       collected_closures_(GrowableObjectArray::null()),
       deoptimized_code_array_(GrowableObjectArray::null()),
+      pending_service_extension_calls_(GrowableObjectArray::null()),
+      registered_service_extension_handlers_(GrowableObjectArray::null()),
       metrics_list_head_(NULL),
       compilation_allowed_(true),
       cha_(NULL),
@@ -723,8 +745,6 @@ Isolate::~Isolate() {
   message_handler_ = NULL;  // Fail fast if we send messages to a dead isolate.
   ASSERT(deopt_context_ == NULL);  // No deopt in progress when isolate deleted.
   delete spawn_state_;
-  delete log_;
-  log_ = NULL;
   delete object_id_ring_;
   object_id_ring_ = NULL;
   delete pause_loop_monitor_;
@@ -733,7 +753,6 @@ Isolate::~Isolate() {
     delete compiler_stats_;
     compiler_stats_ = NULL;
   }
-  RemoveTimelineEventRecorder();
   delete thread_registry_;
 }
 
@@ -764,11 +783,11 @@ Isolate* Isolate::Init(const char* name_prefix,
   ISOLATE_METRIC_LIST(ISOLATE_METRIC_INIT);
 #undef ISOLATE_METRIC_INIT
 
-  const bool force_streams = FLAG_timeline_trace_dir != NULL;
-
   // Initialize Timeline streams.
 #define ISOLATE_TIMELINE_STREAM_INIT(name, enabled_by_default)                 \
-  result->stream_##name##_.Init(#name, force_streams || enabled_by_default);
+  result->stream_##name##_.Init(#name,                                         \
+                                Timeline::EnableStreamByDefault(#name) ||      \
+                                enabled_by_default);
   ISOLATE_TIMELINE_STREAM_LIST(ISOLATE_TIMELINE_STREAM_INIT);
 #undef ISOLATE_TIMELINE_STREAM_INIT
 
@@ -877,27 +896,7 @@ void Isolate::BuildName(const char* name_prefix) {
     name_ = strdup(name_prefix);
     return;
   }
-  const char* kFormat = "%s-%lld";
-  intptr_t len = OS::SNPrint(NULL, 0, kFormat, name_prefix, main_port()) + 1;
-  name_ = reinterpret_cast<char*>(malloc(len));
-  OS::SNPrint(name_, len, kFormat, name_prefix, main_port());
-}
-
-
-Log* Isolate::Log() const {
-  if (FLAG_isolate_log_filter == NULL) {
-    if (is_service_isolate_) {
-      // By default, do not log for the service isolate.
-      return Log::NoOpLog();
-    }
-    return log_;
-  }
-  ASSERT(name_ != NULL);
-  if (strstr(name_, FLAG_isolate_log_filter) == NULL) {
-    // Filter does not match, do not log for this isolate.
-    return Log::NoOpLog();
-  }
-  return log_;
+  name_ = OS::SCreate(NULL, "%s-%" Pd64 "", name_prefix, main_port());
 }
 
 
@@ -1009,6 +1008,10 @@ bool Isolate::MakeRunnable() {
   if (event != NULL) {
     event->Instant("Runnable");
     event->Complete();
+  }
+  if (Service::isolate_stream.enabled()) {
+    ServiceEvent runnableEvent(this, ServiceEvent::kIsolateRunnable);
+    Service::HandleEvent(&runnableEvent);
   }
   return true;
 }
@@ -1203,11 +1206,11 @@ void Isolate::RemoveErrorListener(const SendPort& listener) {
 }
 
 
-void Isolate::NotifyErrorListeners(const String& msg,
+bool Isolate::NotifyErrorListeners(const String& msg,
                                    const String& stacktrace) {
   const GrowableObjectArray& listeners = GrowableObjectArray::Handle(
       this, this->object_store()->error_listeners());
-  if (listeners.IsNull()) return;
+  if (listeners.IsNull()) return false;
 
   const Array& arr = Array::Handle(this, Array::New(2));
   arr.SetAt(0, msg);
@@ -1224,6 +1227,7 @@ void Isolate::NotifyErrorListeners(const String& msg,
       PortMap::PostMessage(msg);
     }
   }
+  return listeners.Length() > 0;
 }
 
 
@@ -1236,6 +1240,7 @@ static void StoreError(Isolate* isolate, const Object& obj) {
 static bool RunIsolate(uword parameter) {
   Isolate* isolate = reinterpret_cast<Isolate*>(parameter);
   IsolateSpawnState* state = NULL;
+  Thread* thread = Thread::Current();
   {
     // TODO(turnidge): Is this locking required here at all anymore?
     MutexLocker ml(isolate->mutex());
@@ -1243,8 +1248,9 @@ static bool RunIsolate(uword parameter) {
   }
   {
     StartIsolateScope start_scope(isolate);
-    StackZone zone(isolate);
-    HandleScope handle_scope(isolate);
+    ASSERT(thread->isolate() == isolate);
+    StackZone zone(thread);
+    HandleScope handle_scope(thread);
 
     // If particular values were requested for this newly spawned isolate, then
     // they are set here before the isolate starts executing user code.
@@ -1313,8 +1319,8 @@ static bool RunIsolate(uword parameter) {
     const Array& args = Array::Handle(Array::New(7));
     args.SetAt(0, SendPort::Handle(SendPort::New(state->parent_port())));
     args.SetAt(1, Instance::Handle(func.ImplicitStaticClosure()));
-    args.SetAt(2, Instance::Handle(state->BuildArgs(zone.GetZone())));
-    args.SetAt(3, Instance::Handle(state->BuildMessage(zone.GetZone())));
+    args.SetAt(2, Instance::Handle(state->BuildArgs(thread)));
+    args.SetAt(3, Instance::Handle(state->BuildMessage(thread)));
     args.SetAt(4, is_spawn_uri ? Bool::True() : Bool::False());
     args.SetAt(5, ReceivePort::Handle(
         ReceivePort::New(isolate->main_port(), true /* control port */)));
@@ -1341,9 +1347,11 @@ static void ShutdownIsolate(uword parameter) {
   {
     // Print the error if there is one.  This may execute dart code to
     // print the exception object, so we need to use a StartIsolateScope.
+    Thread* thread = Thread::Current();
     StartIsolateScope start_scope(isolate);
-    StackZone zone(isolate);
-    HandleScope handle_scope(isolate);
+    ASSERT(thread->isolate() == isolate);
+    StackZone zone(thread);
+    HandleScope handle_scope(thread);
     Error& error = Error::Handle();
     error = isolate->object_store()->sticky_error();
     if (!error.IsNull() && !error.IsUnwindError()) {
@@ -1464,19 +1472,16 @@ void Isolate::Shutdown() {
   }
 #endif  // DEBUG
 
+  Thread* thread = Thread::Current();
+
   // First, perform higher-level cleanup that may need to allocate.
   {
     // Ensure we have a zone and handle scope so that we can call VM functions.
-    StackZone stack_zone(this);
-    HandleScope handle_scope(this);
+    StackZone stack_zone(thread);
+    HandleScope handle_scope(thread);
 
     // Write out the coverage data if collection has been enabled.
     CodeCoverage::Write(this);
-
-    if ((timeline_event_recorder_ != NULL) &&
-        (FLAG_timeline_trace_dir != NULL)) {
-      timeline_event_recorder_->WriteTo(FLAG_timeline_trace_dir);
-    }
   }
 
   // Remove this isolate from the list *before* we start tearing it down, to
@@ -1497,12 +1502,12 @@ void Isolate::Shutdown() {
   {
     // Ensure we have a zone and handle scope so that we can call VM functions,
     // but we no longer allocate new heap objects.
-    StackZone stack_zone(this);
-    HandleScope handle_scope(this);
+    StackZone stack_zone(thread);
+    HandleScope handle_scope(thread);
     NoSafepointScope no_safepoint_scope;
 
     if (compiler_stats_ != NULL) {
-      compiler_stats()->Print();
+      OS::Print("%s", compiler_stats()->PrintToZone());
     }
 
     // Notify exit listeners that this isolate is shutting down.
@@ -1523,6 +1528,15 @@ void Isolate::Shutdown() {
     // Dump all accumulated timer data for the isolate.
     timer_list_.ReportTimers();
 
+    // Before analyzing the isolate's timeline blocks- close all of them.
+    CloseAllTimelineBlocks();
+
+    // Dump all timing data for the isolate.
+    if (FLAG_timing) {
+      TimelinePauseTrace tpt;
+      tpt.Print();
+    }
+
     // Finalize any weak persistent handles with a non-null referent.
     FinalizeWeakPersistentHandlesVisitor visitor;
     api_state()->weak_persistent_handles().VisitHandles(&visitor);
@@ -1534,6 +1548,15 @@ void Isolate::Shutdown() {
       Symbols::DumpStats();
       OS::Print("[-] Stopping isolate:\n"
                 "\tisolate:    %s\n", name());
+    }
+    if (FLAG_print_metrics) {
+      LogBlock lb;
+      THR_Print("Printing metrics for %s\n", name());
+#define ISOLATE_METRIC_PRINT(type, variable, name, unit)                       \
+  THR_Print("%s\n", metric_##variable##_.ToString());
+  ISOLATE_METRIC_LIST(ISOLATE_METRIC_PRINT);
+#undef ISOLATE_METRIC_PRINT
+      THR_Print("\n");
     }
   }
 
@@ -1552,6 +1575,17 @@ void Isolate::Shutdown() {
   // All threads should have exited by now.
   thread_registry()->CheckNotScheduled(this);
   Profiler::ShutdownProfilingForIsolate(this);
+}
+
+
+void Isolate::CloseAllTimelineBlocks() {
+  // Close all blocks
+  thread_registry_->CloseAllTimelineBlocks();
+  TimelineEventRecorder* recorder = Timeline::recorder();
+  if (recorder != NULL) {
+    MutexLocker ml(&recorder->lock_);
+    Thread::Current()->CloseTimelineBlock();
+  }
 }
 
 
@@ -1619,6 +1653,14 @@ void Isolate::VisitObjectPointers(ObjectPointerVisitor* visitor,
   visitor->VisitPointer(
       reinterpret_cast<RawObject**>(&deoptimized_code_array_));
 
+  // Visit the pending service extension calls.
+  visitor->VisitPointer(
+      reinterpret_cast<RawObject**>(&pending_service_extension_calls_));
+
+  // Visit the registered service extension handlers.
+  visitor->VisitPointer(
+      reinterpret_cast<RawObject**>(&registered_service_extension_handlers_));
+
   // Visit objects in the debugger.
   debugger()->VisitObjectPointers(visitor);
 
@@ -1647,21 +1689,6 @@ void Isolate::VisitPrologueWeakPersistentHandles(HandleVisitor* visitor) {
 }
 
 
-void Isolate::SetTimelineEventRecorder(
-    TimelineEventRecorder* timeline_event_recorder) {
-#define ISOLATE_TIMELINE_STREAM_SET_BUFFER(name, enabled_by_default)           \
-  stream_##name##_.set_recorder(timeline_event_recorder);
-  ISOLATE_TIMELINE_STREAM_LIST(ISOLATE_TIMELINE_STREAM_SET_BUFFER)
-#undef ISOLATE_TIMELINE_STREAM_SET_BUFFER
-  timeline_event_recorder_ = timeline_event_recorder;
-}
-
-void Isolate::RemoveTimelineEventRecorder() {
-  SetTimelineEventRecorder(NULL);
-  delete timeline_event_recorder_;
-}
-
-
 void Isolate::PrintJSON(JSONStream* stream, bool ref) {
   JSONObject jsobj(stream);
   jsobj.AddProperty("type", (ref ? "@Isolate" : "Isolate"));
@@ -1675,7 +1702,7 @@ void Isolate::PrintJSON(JSONStream* stream, bool ref) {
     return;
   }
   int64_t start_time_millis = start_time() / kMicrosecondsPerMillisecond;
-  jsobj.AddProperty64("startTime", start_time_millis);
+  jsobj.AddPropertyTimeMillis("startTime", start_time_millis);
   IsolateSpawnState* state = spawn_state();
   if (state != NULL) {
     const Object& entry = Object::Handle(this, state->ResolveFunction());
@@ -1702,7 +1729,7 @@ void Isolate::PrintJSON(JSONStream* stream, bool ref) {
     ASSERT(debugger()->PauseEvent() == NULL);
     ServiceEvent pause_event(this, ServiceEvent::kPauseExit);
     jsobj.AddProperty("pauseEvent", &pause_event);
-  } else if (debugger()->PauseEvent() != NULL) {
+  } else if (debugger()->PauseEvent() != NULL && !resume_request_) {
     ServiceEvent pause_event(debugger()->PauseEvent());
     jsobj.AddProperty("pauseEvent", &pause_event);
   } else {
@@ -1718,7 +1745,9 @@ void Isolate::PrintJSON(JSONStream* stream, bool ref) {
 
   const Library& lib =
       Library::Handle(object_store()->root_library());
-  jsobj.AddProperty("rootLib", lib);
+  if (!lib.IsNull()) {
+    jsobj.AddProperty("rootLib", lib);
+  }
 
   timer_list().PrintTimersToJSONProperty(&jsobj);
   {
@@ -1780,14 +1809,28 @@ intptr_t Isolate::ProfileInterrupt() {
     // Paused at start / exit . Don't tick.
     return 0;
   }
-  InterruptableThreadState* state = thread_state();
-  if (state == NULL) {
-    // Isolate is not scheduled on a thread.
+  // Make sure that the isolate's mutator thread does not change behind our
+  // backs. Otherwise we find the entry in the registry and end up reading
+  // the field again. Only by that time it has been reset to NULL because the
+  // thread was in process of exiting the isolate.
+  Thread* mutator = mutator_thread_;
+  if (mutator == NULL) {
+    // No active mutator.
     ProfileIdle();
     return 1;
   }
-  ASSERT(state->id != OSThread::kInvalidThreadId);
-  ThreadInterrupter::InterruptThread(state);
+
+  // TODO(johnmccutchan): Sample all threads, not just the mutator thread.
+  // TODO(johnmccutchan): Keep a global list of threads and use that
+  // instead of Isolate.
+  ThreadRegistry::EntryIterator it(thread_registry());
+  while (it.HasNext()) {
+    const ThreadRegistry::Entry& entry = it.Next();
+    if (entry.thread == mutator) {
+      ThreadInterrupter::InterruptThread(mutator);
+      break;
+    }
+  }
   return 1;
 }
 
@@ -1836,6 +1879,169 @@ void Isolate::TrackDeoptimizedCode(const Code& code) {
   // TODO(johnmccutchan): Scan this array and the isolate's profile before
   // old space GC and remove the keep_code flag.
   deoptimized_code.Add(code);
+}
+
+
+void Isolate::set_pending_service_extension_calls(
+      const GrowableObjectArray& value) {
+  pending_service_extension_calls_ = value.raw();
+}
+
+
+void Isolate::set_registered_service_extension_handlers(
+    const GrowableObjectArray& value) {
+  registered_service_extension_handlers_ = value.raw();
+}
+
+
+RawObject* Isolate::InvokePendingServiceExtensionCalls() {
+  GrowableObjectArray& calls =
+      GrowableObjectArray::Handle(GetAndClearPendingServiceExtensionCalls());
+  if (calls.IsNull()) {
+    return Object::null();
+  }
+  // Grab run function.
+  const Library& developer_lib = Library::Handle(Library::DeveloperLibrary());
+  ASSERT(!developer_lib.IsNull());
+  const Function& run_extension = Function::Handle(
+      developer_lib.LookupLocalFunction(Symbols::_runExtension()));
+  ASSERT(!run_extension.IsNull());
+
+  const Array& arguments =
+      Array::Handle(Array::New(kPendingEntrySize, Heap::kNew));
+  Object& result = Object::Handle();
+  String& method_name = String::Handle();
+  Instance& closure = Instance::Handle();
+  Array& parameter_keys = Array::Handle();
+  Array& parameter_values = Array::Handle();
+  Instance& reply_port = Instance::Handle();
+  Instance& id = Instance::Handle();
+  for (intptr_t i = 0; i < calls.Length(); i += kPendingEntrySize) {
+    // Grab arguments for call.
+    closure ^= calls.At(i + kPendingHandlerIndex);
+    ASSERT(!closure.IsNull());
+    arguments.SetAt(kPendingHandlerIndex, closure);
+    method_name ^= calls.At(i + kPendingMethodNameIndex);
+    ASSERT(!method_name.IsNull());
+    arguments.SetAt(kPendingMethodNameIndex, method_name);
+    parameter_keys ^= calls.At(i + kPendingKeysIndex);
+    ASSERT(!parameter_keys.IsNull());
+    arguments.SetAt(kPendingKeysIndex, parameter_keys);
+    parameter_values ^= calls.At(i + kPendingValuesIndex);
+    ASSERT(!parameter_values.IsNull());
+    arguments.SetAt(kPendingValuesIndex, parameter_values);
+    reply_port ^= calls.At(i + kPendingReplyPortIndex);
+    ASSERT(!reply_port.IsNull());
+    arguments.SetAt(kPendingReplyPortIndex, reply_port);
+    id ^= calls.At(i + kPendingIdIndex);
+    arguments.SetAt(kPendingIdIndex, id);
+
+    result = DartEntry::InvokeFunction(run_extension, arguments);
+    if (result.IsError()) {
+      if (result.IsUnwindError()) {
+        // Propagate the unwind error. Remaining service extension calls
+        // are dropped.
+        return result.raw();
+      } else {
+        // Send error back over the protocol.
+        Service::PostError(method_name,
+                           parameter_keys,
+                           parameter_values,
+                           reply_port,
+                           id,
+                           Error::Cast(result));
+      }
+    }
+    result = DartLibraryCalls::DrainMicrotaskQueue();
+    if (result.IsError()) {
+      return result.raw();
+    }
+  }
+  return Object::null();
+}
+
+
+RawGrowableObjectArray* Isolate::GetAndClearPendingServiceExtensionCalls() {
+  RawGrowableObjectArray* r = pending_service_extension_calls_;
+  pending_service_extension_calls_ = GrowableObjectArray::null();
+  return r;
+}
+
+
+void Isolate::AppendServiceExtensionCall(const Instance& closure,
+                                         const String& method_name,
+                                         const Array& parameter_keys,
+                                         const Array& parameter_values,
+                                         const Instance& reply_port,
+                                         const Instance& id) {
+  GrowableObjectArray& calls =
+      GrowableObjectArray::Handle(pending_service_extension_calls());
+  if (calls.IsNull()) {
+    calls ^= GrowableObjectArray::New();
+    ASSERT(!calls.IsNull());
+    set_pending_service_extension_calls(calls);
+  }
+  ASSERT(kPendingHandlerIndex == 0);
+  calls.Add(closure);
+  ASSERT(kPendingMethodNameIndex == 1);
+  calls.Add(method_name);
+  ASSERT(kPendingKeysIndex == 2);
+  calls.Add(parameter_keys);
+  ASSERT(kPendingValuesIndex == 3);
+  calls.Add(parameter_values);
+  ASSERT(kPendingReplyPortIndex == 4);
+  calls.Add(reply_port);
+  ASSERT(kPendingIdIndex == 5);
+  calls.Add(id);
+}
+
+
+// This function is written in C++ and not Dart because we must do this
+// operation atomically in the face of random OOB messages. Do not port
+// to Dart code unless you can ensure that the operations will can be
+// done atomically.
+void Isolate::RegisterServiceExtensionHandler(const String& name,
+                                              const Instance& closure) {
+  GrowableObjectArray& handlers =
+      GrowableObjectArray::Handle(registered_service_extension_handlers());
+  if (handlers.IsNull()) {
+    handlers ^= GrowableObjectArray::New(Heap::kOld);
+    set_registered_service_extension_handlers(handlers);
+  }
+#if defined(DEBUG)
+  {
+    // Sanity check.
+    const Instance& existing_handler =
+        Instance::Handle(LookupServiceExtensionHandler(name));
+    ASSERT(existing_handler.IsNull());
+  }
+#endif
+  ASSERT(kRegisteredNameIndex == 0);
+  handlers.Add(name, Heap::kOld);
+  ASSERT(kRegisteredHandlerIndex == 1);
+  handlers.Add(closure, Heap::kOld);
+}
+
+
+// This function is written in C++ and not Dart because we must do this
+// operation atomically in the face of random OOB messages. Do not port
+// to Dart code unless you can ensure that the operations will can be
+// done atomically.
+RawInstance* Isolate::LookupServiceExtensionHandler(const String& name) {
+  const GrowableObjectArray& handlers =
+      GrowableObjectArray::Handle(registered_service_extension_handlers());
+  if (handlers.IsNull()) {
+    return Instance::null();
+  }
+  String& handler_name = String::Handle();
+  for (intptr_t i = 0; i < handlers.Length(); i += kRegisteredEntrySize) {
+    handler_name ^= handlers.At(i + kRegisteredNameIndex);
+    ASSERT(!handler_name.IsNull());
+    if (handler_name.Equals(name)) {
+      return Instance::RawCast(handlers.At(i + kRegisteredHandlerIndex));
+    }
+  }
+  return Instance::null();
 }
 
 
@@ -1940,41 +2146,25 @@ void Isolate::RemoveIsolateFromList(Isolate* isolate) {
 }
 
 
-#if defined(DEBUG)
-void Isolate::CheckForDuplicateThreadState(InterruptableThreadState* state) {
-  MonitorLocker ml(isolates_list_monitor_);
-  ASSERT(state != NULL);
-  Isolate* current = isolates_list_head_;
-  while (current) {
-    ASSERT(current->thread_state() != state);
-    current = current->next_;
-  }
-}
-#endif
-
-
-template<class T>
-T* Isolate::AllocateReusableHandle() {
-  T* handle = reinterpret_cast<T*>(reusable_handles_.AllocateScopedHandle());
-  T::initializeHandle(handle, T::null());
+template<class C>
+C* Isolate::AllocateReusableHandle() {
+  C* handle = reinterpret_cast<C*>(reusable_handles_.AllocateScopedHandle());
+  C::initializeHandle(handle, C::null());
   return handle;
 }
 
 
-static RawInstance* DeserializeObject(Isolate* isolate,
-                                      Zone* zone,
+static RawInstance* DeserializeObject(Thread* thread,
                                       uint8_t* obj_data,
                                       intptr_t obj_len) {
   if (obj_data == NULL) {
     return Instance::null();
   }
-  MessageSnapshotReader reader(obj_data,
-                               obj_len,
-                               isolate,
-                               zone);
-  const Object& obj = Object::Handle(isolate, reader.ReadObject());
+  MessageSnapshotReader reader(obj_data, obj_len, thread);
+  Zone* zone = thread->zone();
+  const Object& obj = Object::Handle(zone, reader.ReadObject());
   ASSERT(!obj.IsError());
-  Instance& instance = Instance::Handle(isolate);
+  Instance& instance = Instance::Handle(zone);
   instance ^= obj.raw();  // Can't use Instance::Cast because may be null.
   return instance.raw();
 }
@@ -2149,14 +2339,13 @@ RawObject* IsolateSpawnState::ResolveFunction() {
 }
 
 
-RawInstance* IsolateSpawnState::BuildArgs(Zone* zone) {
-  return DeserializeObject(isolate_, zone,
-                           serialized_args_, serialized_args_len_);
+RawInstance* IsolateSpawnState::BuildArgs(Thread* thread) {
+  return DeserializeObject(thread, serialized_args_, serialized_args_len_);
 }
 
 
-RawInstance* IsolateSpawnState::BuildMessage(Zone* zone) {
-  return DeserializeObject(isolate_, zone,
+RawInstance* IsolateSpawnState::BuildMessage(Thread* thread) {
+  return DeserializeObject(thread,
                            serialized_message_, serialized_message_len_);
 }
 

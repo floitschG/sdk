@@ -2,9 +2,6 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-// This code was auto-generated, is not intended to be edited, and is subject to
-// significant change. Please see the README file for more information.
-
 library engine.ast_test;
 
 import 'package:analyzer/src/generated/ast.dart';
@@ -2465,7 +2462,7 @@ class ToSourceVisitorTest extends EngineTestCase {
 
   void test_visitForEachStatement_declared() {
     _assertSource(
-        "for (a in b) {}",
+        "for (var a in b) {}",
         AstFactory.forEachStatement(AstFactory.declaredIdentifier3("a"),
             AstFactory.identifier3("b"), AstFactory.block()));
   }

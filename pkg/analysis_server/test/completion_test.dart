@@ -1595,14 +1595,13 @@ main(p) {
   var v2 = p is!4;
 }''',
         <String>[
-          "1+MyClass",
-          "2+MyClass",
-          "3+MyClass",
-          "3-v1",
-          "4+is",
-          "4-isVariable"
-        ],
-        failingTests: '4');
+      "1+MyClass",
+      "2+MyClass",
+      "3+MyClass",
+      "3-v1",
+      "4+is",
+      "4-isVariable"
+    ]);
 
     buildTests(
         'testCompletion_is_asIdentifierStart',
@@ -1645,8 +1644,7 @@ main(p) {
   var isVariable;
   var v = p is!1
 }''',
-        <String>["1+is", "1-isVariable"],
-        failingTests: '1');
+        <String>["1+is", "1-isVariable"]);
 
     buildTests(
         'testCompletion_keyword_in',
@@ -2637,7 +2635,7 @@ class Q {
           "K+else",
           "L+return"
         ],
-        failingTests: '3BCHK');
+        failingTests: '3BCK');
 
     // operators in function
     buildTests('test015', '''f(a,b,c) => a + b * c !1;''', <String>["1+=="],

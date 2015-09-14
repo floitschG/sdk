@@ -15,6 +15,7 @@ namespace dart {
 
 class Array;
 class Breakpoint;
+class BreakpointLocation;
 class Field;
 class GrowableObjectArray;
 class Instance;
@@ -41,6 +42,8 @@ enum JSONRpcErrorCode {
   kMethodNotFound = -32601,
   kInvalidParams  = -32602,
   kInternalError  = -32603,
+
+  kExtensionError = -32000,
 
   kFeatureDisabled         = 100,
   kVMMustBePaused          = 101,
@@ -173,7 +176,7 @@ class JSONStream : ValueObject {
   RingServiceIdZone default_id_zone_;
   ServiceIdZone* id_zone_;
   Dart_Port reply_port_;
-  Instance& seq_;
+  Instance* seq_;
   const char* method_;
   const char** param_keys_;
   const char** param_values_;
@@ -207,7 +210,11 @@ class JSONObject : public ValueObject {
 
   void AddLocation(const Script& script,
                    intptr_t token_pos,
-                   intptr_t end_token_pos = -1);
+                   intptr_t end_token_pos = -1) const;
+
+  void AddLocation(const BreakpointLocation* bpt_loc) const;
+
+  void AddUnresolvedLocation(const BreakpointLocation* bpt_loc) const;
 
   void AddProperty(const char* name, bool b) const {
     stream_->PrintPropertyBool(name, b);

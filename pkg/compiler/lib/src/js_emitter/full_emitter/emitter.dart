@@ -35,6 +35,7 @@ import '../../elements/elements.dart' show
     ConstructorBodyElement,
     ElementKind,
     FieldElement,
+    Name,
     ParameterElement,
     TypeVariableElement,
     MethodElement,
@@ -806,9 +807,11 @@ class Emitter implements js_emitter.Emitter {
 
   jsAst.Statement buildConstantInitializer(ConstantValue constant) {
     jsAst.Name name = namer.constantName(constant);
-    return js.statement('#.# = #',
+    jsAst.Statement initializer = js.statement('#.# = #',
                         [namer.globalObjectForConstant(constant), name,
                          constantInitializerExpression(constant)]);
+    compiler.dumpInfoTask.registerConstantAst(constant, initializer);
+    return initializer;
   }
 
   jsAst.Expression constantListGenerator(jsAst.Expression array) {
@@ -1979,10 +1982,6 @@ function(originalDescriptor, name, holder, isStatic, globalFunctionsAccess) {
           ..add(js.statement('${typesAccess}.push.apply(${typesAccess}, '
                              '${namer.deferredTypesName});'));
 
-      // Sets the static state variable to the state of the current isolate
-      // (which is provided as second argument).
-      body.add(js.statement("${namer.staticStateHolder} = arguments[1];"));
-
       body.add(buildCompileTimeConstants(fragment.constants,
                                          isMainFragment: false));
       body.add(buildStaticNonFinalFieldInitializations(outputUnit));
@@ -1992,7 +1991,7 @@ function(originalDescriptor, name, holder, isStatic, globalFunctionsAccess) {
       statements
           ..add(buildGeneratedBy())
           ..add(js.statement('${deferredInitializers}.current = '
-                             """function (#) {
+                             """function (#, ${namer.staticStateHolder}) {
                                   #
                                 }
                              """, [globalsHolder, body]));

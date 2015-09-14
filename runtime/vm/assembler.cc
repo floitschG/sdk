@@ -267,7 +267,7 @@ intptr_t ObjectPoolWrapper::AddObject(ObjectPool::Entry entry,
 intptr_t ObjectPoolWrapper::AddExternalLabel(const ExternalLabel* label,
                                              Patchability patchable) {
   return AddObject(ObjectPool::Entry(label->address(),
-                                     ObjectPool::kImmediate),
+                                     ObjectPool::kExternalLabel),
                    patchable);
 }
 
@@ -301,7 +301,15 @@ intptr_t ObjectPoolWrapper::FindImmediate(uword imm) {
 intptr_t ObjectPoolWrapper::FindExternalLabel(const ExternalLabel* label,
                                               Patchability patchable) {
   return FindObject(ObjectPool::Entry(label->address(),
-                                      ObjectPool::kImmediate),
+                                      ObjectPool::kExternalLabel),
+                    patchable);
+}
+
+
+intptr_t ObjectPoolWrapper::FindNativeEntry(const ExternalLabel* label,
+                                            Patchability patchable) {
+  return FindObject(ObjectPool::Entry(label->address(),
+                                      ObjectPool::kNativeEntry),
                     patchable);
 }
 

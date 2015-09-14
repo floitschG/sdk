@@ -17,6 +17,7 @@ namespace dart {
 #if defined(USING_SIMULATOR)
 DECLARE_FLAG(int, trace_sim_after);
 #endif
+DECLARE_FLAG(bool, allow_absolute_addresses);
 DEFINE_FLAG(bool, print_stop_message, false, "Print stop message.");
 DECLARE_FLAG(bool, inline_alloc);
 
@@ -52,7 +53,7 @@ static bool CanEncodeBranchOffset(int32_t offset) {
 int32_t Assembler::EncodeBranchOffset(int32_t offset, int32_t instr) {
   if (!CanEncodeBranchOffset(offset)) {
     ASSERT(!use_far_branches());
-    Isolate::Current()->long_jump_base()->Jump(
+    Thread::Current()->long_jump_base()->Jump(
         1, Object::branch_offset_error());
   }
 
@@ -457,33 +458,51 @@ void Assembler::SubuDetectOverflow(Register rd, Register rs, Register rt,
 
 
 void Assembler::Branch(const StubEntry& stub_entry) {
-  const ExternalLabel label(stub_entry.EntryPoint());
-  Branch(&label);
+  ASSERT(!in_delay_slot_);
+  LoadImmediate(TMP, stub_entry.label().address());
+  jr(TMP);
 }
 
 
 void Assembler::BranchPatchable(const StubEntry& stub_entry) {
-  const ExternalLabel label(stub_entry.EntryPoint());
-  BranchPatchable(&label);
+  ASSERT(!in_delay_slot_);
+  const ExternalLabel& label = stub_entry.label();
+  const uint16_t low = Utils::Low16Bits(label.address());
+  const uint16_t high = Utils::High16Bits(label.address());
+  lui(T9, Immediate(high));
+  ori(T9, T9, Immediate(low));
+  jr(T9);
+  delay_slot_available_ = false;  // CodePatcher expects a nop.
 }
 
 
-void Assembler::BranchLink(const StubEntry& stub_entry) {
-  const ExternalLabel label(stub_entry.EntryPoint());
-  BranchLink(&label);
+void Assembler::BranchLink(const ExternalLabel* label) {
+  ASSERT(!in_delay_slot_);
+  LoadImmediate(T9, label->address());
+  jalr(T9);
+}
+
+
+void Assembler::BranchLink(const ExternalLabel* label, Patchability patchable) {
+  ASSERT(!in_delay_slot_);
+  const int32_t offset = ObjectPool::element_offset(
+      object_pool_wrapper_.FindExternalLabel(label, patchable));
+  LoadWordFromPoolOffset(T9, offset - kHeapObjectTag);
+  jalr(T9);
+  if (patchable == kPatchable) {
+    delay_slot_available_ = false;  // CodePatcher expects a nop.
+  }
 }
 
 
 void Assembler::BranchLink(const StubEntry& stub_entry,
                            Patchability patchable) {
-  const ExternalLabel label(stub_entry.EntryPoint());
-  BranchLink(&label, patchable);
+  BranchLink(&stub_entry.label(), patchable);
 }
 
 
 void Assembler::BranchLinkPatchable(const StubEntry& stub_entry) {
-  const ExternalLabel label(stub_entry.EntryPoint());
-  BranchLink(&label, kPatchable);
+  BranchLink(&stub_entry.label(), kPatchable);
 }
 
 
@@ -501,6 +520,7 @@ void Assembler::LoadObjectHelper(Register rd,
   if (object.IsSmi()) {
     LoadImmediate(rd, reinterpret_cast<int32_t>(object.raw()));
   } else if (object.InVMHeap() || !constant_pool_allowed()) {
+    ASSERT(FLAG_allow_absolute_addresses);
     // Make sure that class CallPattern is able to decode this load immediate.
     int32_t object_raw = reinterpret_cast<int32_t>(object.raw());
     const uint16_t object_low = Utils::Low16Bits(object_raw);
@@ -533,6 +553,15 @@ void Assembler::LoadExternalLabel(Register rd,
                                   Patchability patchable) {
   const int32_t offset = ObjectPool::element_offset(
       object_pool_wrapper_.FindExternalLabel(label, patchable));
+  LoadWordFromPoolOffset(rd, offset - kHeapObjectTag);
+}
+
+
+void Assembler::LoadNativeEntry(Register rd,
+                                const ExternalLabel* label,
+                                Patchability patchable) {
+  const int32_t offset = ObjectPool::element_offset(
+      object_pool_wrapper_.FindNativeEntry(label, patchable));
   LoadWordFromPoolOffset(rd, offset - kHeapObjectTag);
 }
 
@@ -841,6 +870,7 @@ void Assembler::UpdateAllocationStats(intptr_t cid,
   intptr_t counter_offset =
       ClassTable::CounterOffsetFor(cid, space == Heap::kNew);
   if (inline_isolate) {
+    ASSERT(FLAG_allow_absolute_addresses);
     ClassTable* class_table = Isolate::Current()->class_table();
     ClassHeapStats** table_ptr = class_table->TableAddressFor(cid);
     if (cid < kNumPredefinedCids) {
@@ -919,6 +949,7 @@ void Assembler::MaybeTraceAllocation(intptr_t cid,
   ASSERT(temp_reg != TMP);
   intptr_t state_offset = ClassTable::StateOffsetFor(cid);
   if (inline_isolate) {
+    ASSERT(FLAG_allow_absolute_addresses);
     ClassTable* class_table = Isolate::Current()->class_table();
     ClassHeapStats** table_ptr = class_table->TableAddressFor(cid);
     if (cid < kNumPredefinedCids) {
@@ -1153,7 +1184,7 @@ void Assembler::EnterCallRuntimeFrame(intptr_t frame_space) {
   ASSERT(!in_delay_slot_);
   const intptr_t kPushedRegistersSize =
       kDartVolatileCpuRegCount * kWordSize +
-      2 * kWordSize +  // FP and RA.
+      3 * kWordSize +  // PP, FP and RA.
       kDartVolatileFpuRegCount * kWordSize;
 
   SetPrologueOffset();
@@ -1174,18 +1205,21 @@ void Assembler::EnterCallRuntimeFrame(intptr_t frame_space) {
   for (int i = kDartFirstVolatileFpuReg; i <= kDartLastVolatileFpuReg; i++) {
     // These go above the volatile CPU registers.
     const int slot =
-        (i - kDartFirstVolatileFpuReg) + kDartVolatileCpuRegCount + 2;
+        (i - kDartFirstVolatileFpuReg) + kDartVolatileCpuRegCount + 3;
     FRegister reg = static_cast<FRegister>(i);
     swc1(reg, Address(SP, slot * kWordSize));
   }
   for (int i = kDartFirstVolatileCpuReg; i <= kDartLastVolatileCpuReg; i++) {
     // + 2 because FP goes in slot 0.
-    const int slot = (i - kDartFirstVolatileCpuReg) + 2;
+    const int slot = (i - kDartFirstVolatileCpuReg) + 3;
     Register reg = static_cast<Register>(i);
     sw(reg, Address(SP, slot * kWordSize));
   }
-  sw(RA, Address(SP, 1 * kWordSize));
-  sw(FP, Address(SP, 0 * kWordSize));
+  sw(RA, Address(SP, 2 * kWordSize));
+  sw(FP, Address(SP, 1 * kWordSize));
+  sw(PP, Address(SP, 0 * kWordSize));
+  LoadPoolPointer();
+
   mov(FP, SP);
 
   ReserveAlignedFrameSpace(frame_space);
@@ -1196,7 +1230,7 @@ void Assembler::LeaveCallRuntimeFrame() {
   ASSERT(!in_delay_slot_);
   const intptr_t kPushedRegistersSize =
       kDartVolatileCpuRegCount * kWordSize +
-      2 * kWordSize +  // FP and RA.
+      3 * kWordSize +  // FP and RA.
       kDartVolatileFpuRegCount * kWordSize;
 
   Comment("LeaveCallRuntimeFrame");
@@ -1207,18 +1241,19 @@ void Assembler::LeaveCallRuntimeFrame() {
   mov(SP, FP);
 
   // Restore volatile CPU and FPU registers from the stack.
-  lw(FP, Address(SP, 0 * kWordSize));
-  lw(RA, Address(SP, 1 * kWordSize));
+  lw(PP, Address(SP, 0 * kWordSize));
+  lw(FP, Address(SP, 1 * kWordSize));
+  lw(RA, Address(SP, 2 * kWordSize));
   for (int i = kDartFirstVolatileCpuReg; i <= kDartLastVolatileCpuReg; i++) {
     // + 2 because FP goes in slot 0.
-    const int slot = (i - kDartFirstVolatileCpuReg) + 2;
+    const int slot = (i - kDartFirstVolatileCpuReg) + 3;
     Register reg = static_cast<Register>(i);
     lw(reg, Address(SP, slot * kWordSize));
   }
   for (int i = kDartFirstVolatileFpuReg; i <= kDartLastVolatileFpuReg; i++) {
     // These go above the volatile CPU registers.
     const int slot =
-        (i - kDartFirstVolatileFpuReg) + kDartVolatileCpuRegCount + 2;
+        (i - kDartFirstVolatileFpuReg) + kDartVolatileCpuRegCount + 3;
     FRegister reg = static_cast<FRegister>(i);
     lwc1(reg, Address(SP, slot * kWordSize));
   }

@@ -18,62 +18,6 @@ try_catch_on_syntax_test/11: Fail # Issue 19823
 
 call_function_apply_test: RuntimeError # Issue 23873
 
-conditional_method_invocation_test/12: Fail # Issue 23795
-conditional_method_invocation_test/13: Fail # Issue 23795
-conditional_method_invocation_test/14: Fail # Issue 23795
-conditional_method_invocation_test/15: Fail # Issue 23795
-conditional_method_invocation_test/16: Fail # Issue 23795
-conditional_method_invocation_test/17: Fail # Issue 23795
-conditional_method_invocation_test/18: Fail # Issue 23795
-conditional_method_invocation_test/19: Fail # Issue 23795
-conditional_property_access_test/10: Fail # Issue 23795
-conditional_property_access_test/11: Fail # Issue 23795
-conditional_property_access_test/12: Fail # Issue 23795
-conditional_property_access_test/13: Fail # Issue 23795
-conditional_property_access_test/14: Fail # Issue 23795
-conditional_property_access_test/15: Fail # Issue 23795
-conditional_property_access_test/16: Fail # Issue 23795
-conditional_property_access_test/17: Fail # Issue 23795
-conditional_property_assignment_test/23: Fail # Issue 23795
-conditional_property_assignment_test/24: Fail # Issue 23795
-conditional_property_assignment_test/25: Fail # Issue 23795
-conditional_property_assignment_test/26: Fail # Issue 23795
-conditional_property_assignment_test/27: Fail # Issue 23795
-conditional_property_assignment_test/28: Fail # Issue 23795
-conditional_property_assignment_test/29: Fail # Issue 23795
-conditional_property_assignment_test/30: Fail # Issue 23795
-conditional_property_assignment_test/31: Fail # Issue 23795
-conditional_property_assignment_test/32: Fail # Issue 23795
-conditional_property_assignment_test/33: Fail # Issue 23795
-conditional_property_assignment_test/34: Fail # Issue 23795
-conditional_property_assignment_test/35: Fail # Issue 23795
-conditional_property_increment_decrement_test/17: Fail # Issue 23795
-conditional_property_increment_decrement_test/18: Fail # Issue 23795
-conditional_property_increment_decrement_test/19: Fail # Issue 23795
-conditional_property_increment_decrement_test/20: Fail # Issue 23795
-conditional_property_increment_decrement_test/21: Fail # Issue 23795
-conditional_property_increment_decrement_test/22: Fail # Issue 23795
-conditional_property_increment_decrement_test/23: Fail # Issue 23795
-conditional_property_increment_decrement_test/24: Fail # Issue 23795
-conditional_property_increment_decrement_test/25: Fail # Issue 23795
-conditional_property_increment_decrement_test/26: Fail # Issue 23795
-conditional_property_increment_decrement_test/27: Fail # Issue 23795
-conditional_property_increment_decrement_test/28: Fail # Issue 23795
-conditional_property_increment_decrement_test/29: Fail # Issue 23795
-conditional_property_increment_decrement_test/30: Fail # Issue 23795
-conditional_property_increment_decrement_test/31: Fail # Issue 23795
-conditional_property_increment_decrement_test/32: Fail # Issue 23795
-conditional_property_increment_decrement_test/33: Fail # Issue 23795
-conditional_property_increment_decrement_test/34: Fail # Issue 23795
-conditional_property_increment_decrement_test/35: Fail # Issue 23795
-conditional_property_increment_decrement_test/36: Fail # Issue 23795
-conditional_property_increment_decrement_test/37: Fail # Issue 23795
-conditional_property_increment_decrement_test/38: Fail # Issue 23795
-conditional_property_increment_decrement_test/39: Fail # Issue 23795
-conditional_property_increment_decrement_test/40: Fail # Issue 23795
-if_null_assignment_behavior_test/31: Fail # Issue 23795
-if_null_assignment_behavior_test/32: Fail # Issue 23795
-
 [ $compiler == dart2js && $runtime == jsshell ]
 await_for_test: Skip # Jsshell does not provide periodic timers, Issue 7728
 async_star_test: RuntimeError # Jsshell does not provide non-zero timers, Issue 7728
@@ -92,7 +36,6 @@ full_stacktrace3_test: Pass, RuntimeError # Issue 12698
 stacktrace_test: Pass, RuntimeError # # Issue 12698
 stacktrace_rethrow_nonerror_test: Pass, RuntimeError # Issue 12698
 stacktrace_rethrow_error_test: Pass, RuntimeError # Issue 12698
-instantiate_type_variable_test/01: CompileTimeError # Issue 13631
 type_variable_conflict_test/01: Fail # Issue 13702
 type_variable_conflict_test/02: Fail # Issue 13702
 type_variable_conflict_test/03: Fail # Issue 13702
@@ -120,7 +63,6 @@ regress_22976_test/02: CompileTimeError # Issue 23132
 
 if_null_assignment_behavior_test/13: Crash # Issue 23491
 if_null_assignment_behavior_test/14: Crash # Issue 23491
-nullaware_opt_test: Fail # Fails at e?.f ??= 200;
 
 if_null_assignment_behavior_test/29: Crash # Issue 23611
 prefix_assignment_test/01: Crash # Issue 23611
@@ -203,12 +145,10 @@ identical_closure2_test: RuntimeError # Issue 1533, Issue 12596
 integer_division_by_zero_test: RuntimeError # Issue 8301
 built_in_identifier_prefix_test: CompileTimeError # Issue 6972
 number_identity2_test: RuntimeError # Issue 12596
-new_expression_type_args_test/00: CompileTimeError # Issue 5519
-new_expression_type_args_test/01: CompileTimeError # Issue 5519
 double_int_to_string_test: RuntimeError # Issue 1533
 mint_arithmetic_test: RuntimeError # Issue 1533
 left_shift_test: RuntimeError # Issue 1533
-factory_redirection_test/01: CompileTimeError # Issue 12752
+regress_24283_test: RuntimeError # Issue 1533
 bad_override_test/01: CompileTimeError # Issue 11496
 bad_override_test/02: CompileTimeError # Issue 11496
 constructor_named_arguments_test/01: CompileTimeError # Issue 5519
@@ -348,8 +288,7 @@ await_for_cancel_test: Crash # (await for(var x in controller.stream){for(int j=
 await_for_test: Crash # (await for(var x in infiniteStream()){i++ ;if(i>10)break;t4.record(x);}): await for
 await_for_use_local_test: Crash # (await for(var v in s){accum+= v;}): await for
 await_future_test: RuntimeError # Please triage this failure.
-await_regression_test: RuntimeError # Please triage this failure.
-await_test: RuntimeError # $async$temp1.S is not a function
+await_regression_test: RuntimeError # "Obelix".then$1 is not a function
 cha_deopt1_test: Crash # (d.make_u()): deferred access is not implemented
 cha_deopt2_test: Crash # (d.make_u()): deferred access is not implemented
 cha_deopt3_test: Crash # (d.make_u()): deferred access is not implemented
@@ -410,19 +349,6 @@ generic2_test: RuntimeError # Please triage this failure.
 generic_field_mixin3_test: RuntimeError # Please triage this failure.
 generic_instanceof_test: RuntimeError # Please triage this failure.
 generic_native_test: RuntimeError # Please triage this failure.
-if_null_assignment_behavior_test/28: RuntimeError # Please triage this failure.
-if_null_assignment_static_test/01: RuntimeError # v0.get$a is not a function
-if_null_assignment_static_test/03: RuntimeError # v0.get$a is not a function
-if_null_assignment_static_test/04: RuntimeError # v0.get$b is not a function
-if_null_assignment_static_test/05: RuntimeError # v0.get$a is not a function
-if_null_assignment_static_test/29: RuntimeError # v0.get$a is not a function
-if_null_assignment_static_test/31: RuntimeError # v0.get$a is not a function
-if_null_assignment_static_test/32: RuntimeError # v0.get$b is not a function
-if_null_assignment_static_test/33: RuntimeError # v0.get$a is not a function
-if_null_assignment_static_test/36: RuntimeError # v0.get$a is not a function
-if_null_assignment_static_test/38: RuntimeError # v0.get$a is not a function
-if_null_assignment_static_test/39: RuntimeError # v0.get$b is not a function
-if_null_assignment_static_test/40: RuntimeError # v0.get$a is not a function
 infinite_switch_label_test: Crash # (switch (target){l0:...  continue to a labeled switch case
 instance_creation_in_function_annotation_test: Crash # (static Iterable<Str...  cannot handle sync*/async* functions
 instanceof2_test: RuntimeError # Please triage this failure.

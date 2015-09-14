@@ -18,6 +18,9 @@ import 'common/backend_api.dart' show
 import 'common/codegen.dart' show
     CodegenRegistry,
     CodegenWorkItem;
+import 'common/names.dart' show
+    Identifiers,
+    Uris;
 import 'common/registry.dart' show
     Registry;
 import 'common/resolution.dart' show
@@ -88,23 +91,21 @@ import 'mirrors_used.dart' show
 import 'null_compiler_output.dart' show
     NullCompilerOutput,
     NullSink;
+import 'parser/diet_parser_task.dart' show
+    DietParserTask;
+import 'parser/parser_task.dart' show
+    DietParserTask,
+    ParserTask;
 import 'patch_parser.dart' show
     PatchParserTask;
+import 'resolution/registry.dart' show
+    ResolutionRegistry;
 import 'resolution/resolution.dart' show
-    ResolutionRegistry,
-    ResolverTask,
+    ResolverTask;
+import 'resolution/tree_elements.dart' show
     TreeElementMapping;
-import 'scanner/token_map.dart' show
-    TokenMap;
-import 'scanner/scannerlib.dart' show
-    COMMENT_TOKEN,
-    DietParserTask,
-    EOF_TOKEN,
-    ParserTask,
-    ScannerTask,
-    StringToken,
-    Token,
-    TokenPair;
+import 'scanner/scanner_task.dart' show
+    ScannerTask;
 import 'serialization/task.dart' show
     SerializationTask;
 import 'script.dart' show
@@ -113,27 +114,31 @@ import 'ssa/ssa.dart' show
     HInstruction;
 import 'tracer.dart' show
     Tracer;
+import 'tokens/token.dart' show
+    StringToken,
+    Token,
+    TokenPair;
+import 'tokens/token_constants.dart' as Tokens show
+    COMMENT_TOKEN,
+    EOF_TOKEN;
+import 'tokens/token_map.dart' show
+    TokenMap;
 import 'tree/tree.dart' show
     Node;
 import 'typechecker.dart' show
     TypeCheckerTask;
 import 'types/types.dart' as ti;
 import 'universe/universe.dart' show
+    CallStructure,
     Selector,
     Universe;
-import 'util/characters.dart' show $_;
 import 'util/util.dart' show
-    Link;
+    Link,
+    Setlet;
 import 'world.dart' show
     World;
 
 abstract class Compiler implements DiagnosticListener {
-  static final Uri DART_CORE = new Uri(scheme: 'dart', path: 'core');
-  static final Uri DART_MIRRORS = new Uri(scheme: 'dart', path: 'mirrors');
-  static final Uri DART_NATIVE_TYPED_DATA =
-      new Uri(scheme: 'dart', path: '_native_typed_data');
-  static final Uri DART_INTERNAL = new Uri(scheme: 'dart', path: '_internal');
-  static final Uri DART_ASYNC = new Uri(scheme: 'dart', path: 'async');
 
   final Stopwatch totalCompileTime = new Stopwatch();
   int nextFreeClassId = 0;
@@ -165,7 +170,7 @@ abstract class Compiler implements DiagnosticListener {
    */
   // TODO(johnniwinther): This should not be a [ResolutionRegistry].
   final Registry mirrorDependencies =
-      new ResolutionRegistry.internal(null, new TreeElementMapping(null));
+      new ResolutionRegistry(null, new TreeElementMapping(null));
 
   final bool enableMinification;
 
@@ -271,6 +276,11 @@ abstract class Compiler implements DiagnosticListener {
 
   List<Uri> librariesToAnalyzeWhenRun;
 
+  /// The set of platform libraries reported as unsupported.
+  ///
+  /// For instance when importing 'dart:io' without '--categories=Server'.
+  Set<Uri> disallowedLibraryUris = new Setlet<Uri>();
+
   Tracer tracer;
 
   CompilerTask measuredTask;
@@ -292,6 +302,7 @@ abstract class Compiler implements DiagnosticListener {
   ClassElement get numClass => _coreTypes.numClass;
   ClassElement get intClass => _coreTypes.intClass;
   ClassElement get doubleClass => _coreTypes.doubleClass;
+  ClassElement get resourceClass => _coreTypes.resourceClass;
   ClassElement get stringClass => _coreTypes.stringClass;
   ClassElement get functionClass => _coreTypes.functionClass;
   ClassElement get nullClass => _coreTypes.nullClass;
@@ -435,29 +446,14 @@ abstract class Compiler implements DiagnosticListener {
   /// A customizable filter that is applied to enqueued work items.
   QueueFilter enqueuerFilter = new QueueFilter();
 
-  static const String MAIN = 'main';
-  static const String CALL_OPERATOR_NAME = 'call';
-  static const String NO_SUCH_METHOD = 'noSuchMethod';
-  static const int NO_SUCH_METHOD_ARG_COUNT = 1;
+  final Selector symbolValidatedConstructorSelector = new Selector.call(
+      const PublicName('validated'), CallStructure.ONE_ARG);
+
   static const String CREATE_INVOCATION_MIRROR =
       'createInvocationMirror';
-  static const String FROM_ENVIRONMENT = 'fromEnvironment';
-
-  static const String RUNTIME_TYPE = 'runtimeType';
 
   static const String UNDETERMINED_BUILD_ID =
       "build number could not be determined";
-
-  final Selector iteratorSelector =
-      new Selector.getter('iterator', null);
-  final Selector currentSelector =
-      new Selector.getter('current', null);
-  final Selector moveNextSelector =
-      new Selector.call('moveNext', null, 0);
-  final Selector noSuchMethodSelector = new Selector.call(
-      Compiler.NO_SUCH_METHOD, null, Compiler.NO_SUCH_METHOD_ARG_COUNT);
-  final Selector symbolValidatedConstructorSelector = new Selector.call(
-      'validated', null, 1);
 
   bool enabledRuntimeType = false;
   bool enabledFunctionApply = false;
@@ -737,11 +733,11 @@ abstract class Compiler implements DiagnosticListener {
   /// been resolved.
   void onLibraryCreated(LibraryElement library) {
     Uri uri = library.canonicalUri;
-    if (uri == DART_CORE) {
+    if (uri == Uris.dart_core) {
       coreLibrary = library;
-    } else if (uri == DART_NATIVE_TYPED_DATA) {
+    } else if (uri == Uris.dart__native_typed_data) {
       typedDataLibrary = library;
-    } else if (uri == DART_MIRRORS) {
+    } else if (uri == Uris.dart_mirrors) {
       mirrorsLibrary = library;
     }
     backend.onLibraryCreated(library);
@@ -758,26 +754,92 @@ abstract class Compiler implements DiagnosticListener {
   /// for [library].
   Future onLibraryScanned(LibraryElement library, LibraryLoader loader) {
     Uri uri = library.canonicalUri;
-    if (uri == DART_CORE) {
+    if (uri == Uris.dart_core) {
       initializeCoreClasses();
       identicalFunction = coreLibrary.find('identical');
-    } else if (uri == DART_INTERNAL) {
+    } else if (uri == Uris.dart__internal) {
       symbolImplementationClass = findRequiredElement(library, 'Symbol');
-    } else if (uri == DART_MIRRORS) {
+    } else if (uri == Uris.dart_mirrors) {
       mirrorSystemClass = findRequiredElement(library, 'MirrorSystem');
       mirrorsUsedClass = findRequiredElement(library, 'MirrorsUsed');
-    } else if (uri == DART_ASYNC) {
+    } else if (uri == Uris.dart_async) {
       asyncLibrary = library;
       deferredLibraryClass = findRequiredElement(library, 'DeferredLibrary');
       _coreTypes.futureClass = findRequiredElement(library, 'Future');
       _coreTypes.streamClass = findRequiredElement(library, 'Stream');
-    } else if (uri == DART_NATIVE_TYPED_DATA) {
+    } else if (uri == Uris.dart__native_typed_data) {
       typedDataClass = findRequiredElement(library, 'NativeTypedData');
     } else if (uri == js_backend.JavaScriptBackend.DART_JS_HELPER) {
       patchAnnotationClass = findRequiredElement(library, '_Patch');
       nativeAnnotationClass = findRequiredElement(library, 'Native');
     }
     return backend.onLibraryScanned(library, loader);
+  }
+
+  /// Compute the set of distinct import chains to the library at [uri] within
+  /// [loadedLibraries].
+  ///
+  /// The chains are strings of the form
+  ///
+  ///       <main-uri> => <intermediate-uri1> => <intermediate-uri2> => <uri>
+  ///
+  Set<String> computeImportChainsFor(LoadedLibraries loadedLibraries, Uri uri) {
+    // TODO(johnniwinther): Move computation of dependencies to the library
+    // loader.
+    Uri rootUri = loadedLibraries.rootUri;
+    Set<String> importChains = new Set<String>();
+    // The maximum number of full imports chains to process.
+    final int chainLimit = 10000;
+    // The maximum number of imports chains to show.
+    final int compactChainLimit = verbose ? 20 : 10;
+    int chainCount = 0;
+    loadedLibraries.forEachImportChain(uri,
+        callback: (Link<Uri> importChainReversed) {
+      Link<CodeLocation> compactImportChain = const Link<CodeLocation>();
+      CodeLocation currentCodeLocation =
+          new UriLocation(importChainReversed.head);
+      compactImportChain = compactImportChain.prepend(currentCodeLocation);
+      for (Link<Uri> link = importChainReversed.tail;
+           !link.isEmpty;
+           link = link.tail) {
+        Uri uri = link.head;
+        if (!currentCodeLocation.inSameLocation(uri)) {
+          currentCodeLocation =
+              verbose ? new UriLocation(uri) : new CodeLocation(uri);
+          compactImportChain =
+              compactImportChain.prepend(currentCodeLocation);
+        }
+      }
+      String importChain =
+          compactImportChain.map((CodeLocation codeLocation) {
+            return codeLocation.relativize(rootUri);
+          }).join(' => ');
+
+      if (!importChains.contains(importChain)) {
+        if (importChains.length > compactChainLimit) {
+          importChains.add('...');
+          return false;
+        } else {
+          importChains.add(importChain);
+        }
+      }
+
+      chainCount++;
+      if (chainCount > chainLimit) {
+        // Assume there are more import chains.
+        importChains.add('...');
+        return false;
+      }
+      return true;
+    });
+    return importChains;
+  }
+
+  /// Register that [uri] was recognized but disallowed as a dependency.
+  ///
+  /// For instance import of 'dart:io' without '--categories=Server'.
+  void registerDisallowedLibraryUse(Uri uri) {
+    disallowedLibraryUris.add(uri);
   }
 
   /// This method is called when all new libraries loaded through
@@ -790,60 +852,26 @@ abstract class Compiler implements DiagnosticListener {
   /// libraries.
   Future onLibrariesLoaded(LoadedLibraries loadedLibraries) {
     return new Future.sync(() {
-      if (!loadedLibraries.containsLibrary(DART_CORE)) {
+      for (Uri uri in disallowedLibraryUris) {
+        if (loadedLibraries.containsLibrary(uri)) {
+          Set<String> importChains =
+              computeImportChainsFor(loadedLibraries, Uri.parse('dart:io'));
+          reportInfo(NO_LOCATION_SPANNABLE,
+             MessageKind.DISALLOWED_LIBRARY_IMPORT,
+              {'uri': uri,
+               'importChain': importChains.join(
+                   MessageTemplate.DISALLOWED_LIBRARY_IMPORT_PADDING)});
+        }
+      }
+
+      if (!loadedLibraries.containsLibrary(Uris.dart_core)) {
         return null;
       }
+
       if (!enableExperimentalMirrors &&
-          loadedLibraries.containsLibrary(DART_MIRRORS)) {
-        // TODO(johnniwinther): Move computation of dependencies to the library
-        // loader.
-        Uri rootUri = loadedLibraries.rootUri;
-        Set<String> importChains = new Set<String>();
-        // The maximum number of full imports chains to process.
-        final int chainLimit = 10000;
-        // The maximum number of imports chains to show.
-        final int compactChainLimit = verbose ? 20 : 10;
-        int chainCount = 0;
-        loadedLibraries.forEachImportChain(DART_MIRRORS,
-            callback: (Link<Uri> importChainReversed) {
-          Link<CodeLocation> compactImportChain = const Link<CodeLocation>();
-          CodeLocation currentCodeLocation =
-              new UriLocation(importChainReversed.head);
-          compactImportChain = compactImportChain.prepend(currentCodeLocation);
-          for (Link<Uri> link = importChainReversed.tail;
-               !link.isEmpty;
-               link = link.tail) {
-            Uri uri = link.head;
-            if (!currentCodeLocation.inSameLocation(uri)) {
-              currentCodeLocation =
-                  verbose ? new UriLocation(uri) : new CodeLocation(uri);
-              compactImportChain =
-                  compactImportChain.prepend(currentCodeLocation);
-            }
-          }
-          String importChain =
-              compactImportChain.map((CodeLocation codeLocation) {
-                return codeLocation.relativize(rootUri);
-              }).join(' => ');
-
-          if (!importChains.contains(importChain)) {
-            if (importChains.length > compactChainLimit) {
-              importChains.add('...');
-              return false;
-            } else {
-              importChains.add(importChain);
-            }
-          }
-
-          chainCount++;
-          if (chainCount > chainLimit) {
-            // Assume there are more import chains.
-            importChains.add('...');
-            return false;
-          }
-          return true;
-        });
-
+          loadedLibraries.containsLibrary(Uris.dart_mirrors)) {
+        Set<String> importChains =
+            computeImportChainsFor(loadedLibraries, Uris.dart_mirrors);
         if (!backend.supportsReflection) {
           reportError(NO_LOCATION_SPANNABLE,
                       MessageKind.MIRRORS_LIBRARY_NOT_SUPPORT_BY_BACKEND);
@@ -858,18 +886,25 @@ abstract class Compiler implements DiagnosticListener {
       functionClass.ensureResolved(this);
       functionApplyMethod = functionClass.lookupLocalMember('apply');
 
-      proxyConstant =
-          constants.getConstantValue(
-              resolver.constantCompiler.compileConstant(
-                  coreLibrary.find('proxy')));
-
       if (preserveComments) {
-        return libraryLoader.loadLibrary(DART_MIRRORS)
+        return libraryLoader.loadLibrary(Uris.dart_mirrors)
             .then((LibraryElement libraryElement) {
           documentClass = libraryElement.find('Comment');
         });
       }
     }).then((_) => backend.onLibrariesLoaded(loadedLibraries));
+  }
+
+  bool isProxyConstant(ConstantValue value) {
+    FieldElement field = coreLibrary.find('proxy');
+    if (field == null) return false;
+    if (!enqueuer.resolution.hasBeenResolved(field)) return false;
+    if (proxyConstant == null) {
+      proxyConstant =
+          constants.getConstantValue(
+              resolver.constantCompiler.compileConstant(field));
+    }
+    return proxyConstant == value;
   }
 
   Element findRequiredElement(LibraryElement library, String name) {
@@ -898,13 +933,13 @@ abstract class Compiler implements DiagnosticListener {
     } else if (mirrorsUsedClass == cls) {
       mirrorsUsedConstructor = cls.constructors.head;
     } else if (intClass == cls) {
-      intEnvironment = intClass.lookupConstructor(FROM_ENVIRONMENT);
+      intEnvironment = intClass.lookupConstructor(Identifiers.fromEnvironment);
     } else if (stringClass == cls) {
       stringEnvironment =
-          stringClass.lookupConstructor(FROM_ENVIRONMENT);
+          stringClass.lookupConstructor(Identifiers.fromEnvironment);
     } else if (boolClass == cls) {
       boolEnvironment =
-          boolClass.lookupConstructor(FROM_ENVIRONMENT);
+          boolClass.lookupConstructor(Identifiers.fromEnvironment);
     }
   }
 
@@ -922,6 +957,7 @@ abstract class Compiler implements DiagnosticListener {
     _coreTypes.numClass = lookupCoreClass('num');
     _coreTypes.intClass = lookupCoreClass('int');
     _coreTypes.doubleClass = lookupCoreClass('double');
+    _coreTypes.resourceClass = lookupCoreClass('Resource');
     _coreTypes.stringClass = lookupCoreClass('String');
     _coreTypes.functionClass = lookupCoreClass('Function');
     _coreTypes.listClass = lookupCoreClass('List');
@@ -992,30 +1028,33 @@ abstract class Compiler implements DiagnosticListener {
   void computeMain() {
     if (mainApp == null) return;
 
-    Element main = mainApp.findExported(MAIN);
+    Element main = mainApp.findExported(Identifiers.main);
     ErroneousElement errorElement = null;
     if (main == null) {
       if (analyzeOnly) {
         if (!analyzeAll) {
           errorElement = new ErroneousElementX(
-              MessageKind.CONSIDER_ANALYZE_ALL, {'main': MAIN}, MAIN, mainApp);
+              MessageKind.CONSIDER_ANALYZE_ALL, {'main': Identifiers.main},
+              Identifiers.main, mainApp);
         }
       } else {
         // Compilation requires a main method.
         errorElement = new ErroneousElementX(
-            MessageKind.MISSING_MAIN, {'main': MAIN}, MAIN, mainApp);
+            MessageKind.MISSING_MAIN, {'main': Identifiers.main},
+            Identifiers.main, mainApp);
       }
       mainFunction = backend.helperForMissingMain();
     } else if (main.isErroneous && main.isSynthesized) {
       if (main is ErroneousElement) {
         errorElement = main;
       } else {
-        internalError(main, 'Problem with $MAIN.');
+        internalError(main, 'Problem with ${Identifiers.main}.');
       }
       mainFunction = backend.helperForBadMain();
     } else if (!main.isFunction) {
       errorElement = new ErroneousElementX(
-          MessageKind.MAIN_NOT_A_FUNCTION, {'main': MAIN}, MAIN, main);
+          MessageKind.MAIN_NOT_A_FUNCTION, {'main': Identifiers.main},
+          Identifiers.main, main);
       mainFunction = backend.helperForBadMain();
     } else {
       mainFunction = main;
@@ -1026,7 +1065,8 @@ abstract class Compiler implements DiagnosticListener {
         parameters.orderedForEachParameter((Element parameter) {
           if (index++ < 2) return;
           errorElement = new ErroneousElementX(
-              MessageKind.MAIN_WITH_EXTRA_PARAMETER, {'main': MAIN}, MAIN,
+              MessageKind.MAIN_WITH_EXTRA_PARAMETER, {'main': Identifiers.main},
+              Identifiers.main,
               parameter);
           mainFunction = backend.helperForMainArity();
           // Don't warn about main not being used:
@@ -1036,7 +1076,7 @@ abstract class Compiler implements DiagnosticListener {
     }
     if (mainFunction == null) {
       if (errorElement == null && !analyzeOnly && !analyzeAll) {
-        internalError(mainApp, "Problem with '$MAIN'.");
+        internalError(mainApp, "Problem with '${Identifiers.main}'.");
       } else {
         mainFunction = errorElement;
       }
@@ -1048,6 +1088,30 @@ abstract class Compiler implements DiagnosticListener {
           errorElement, errorElement.messageKind,
           errorElement.messageArguments);
     }
+  }
+
+  /// Analyze all member of the library in [libraryUri].
+  ///
+  /// If [skipLibraryWithPartOfTag] is `true`, member analysis is skipped if the
+  /// library has a `part of` tag, assuming it is a part and not a library.
+  ///
+  /// This operation assumes an unclosed resolution queue and is only supported
+  /// when the '--analyze-main' option is used.
+  Future<LibraryElement> analyzeUri(
+      Uri libraryUri,
+      {bool skipLibraryWithPartOfTag: true}) {
+    assert(analyzeMain);
+    log('Analyzing $libraryUri ($buildId)');
+    return libraryLoader.loadLibrary(libraryUri).then((LibraryElement library) {
+      var compilationUnit = library.compilationUnit;
+      if (skipLibraryWithPartOfTag && compilationUnit.partTag != null) {
+        return null;
+      }
+      fullyEnqueueLibrary(library, enqueuer.resolution);
+      emptyQueue(enqueuer.resolution);
+      enqueuer.resolution.logSummary(log);
+      return library;
+    });
   }
 
   /// Performs the compilation when all libraries have been loaded.
@@ -1134,6 +1198,7 @@ abstract class Compiler implements DiagnosticListener {
 
     log('Compiling...');
     phase = PHASE_COMPILING;
+    backend.onCodegenStart();
     // TODO(johnniwinther): Move these to [CodegenEnqueuer].
     if (hasIsolateSupport) {
       backend.enableIsolateSupport(enqueuer.codegen);
@@ -1187,6 +1252,17 @@ abstract class Compiler implements DiagnosticListener {
     }
   }
 
+  /**
+   * Empty the [world] queue.
+   */
+  void emptyQueue(Enqueuer world) {
+    world.forEach((WorkItem work) {
+      withCurrentElement(work.element, () {
+        world.applyImpact(work.element, work.run(this, world));
+      });
+    });
+  }
+
   void processQueue(Enqueuer world, Element main) {
     world.nativeEnqueuer.processNativeClasses(libraryLoader.libraries);
     if (main != null && !main.isErroneous) {
@@ -1208,12 +1284,9 @@ abstract class Compiler implements DiagnosticListener {
     if (verbose) {
       progress.reset();
     }
-    world.forEach((WorkItem work) {
-      withCurrentElement(work.element, () {
-        world.applyImpact(work.element, work.run(this, world));
-      });
-    });
+    emptyQueue(world);
     world.queueIsClosed = true;
+    backend.onQueueClosed();
     assert(compilationFailed || world.checkNoEnqueuedInvokedInstanceMethods());
   }
 
@@ -1399,8 +1472,7 @@ abstract class Compiler implements DiagnosticListener {
     if (uri == null && currentElement != null) {
       uri = currentElement.compilationUnit.script.resourceUri;
     }
-    return SourceSpan.withCharacterOffsets(begin, end,
-      (beginOffset, endOffset) => new SourceSpan(uri, beginOffset, endOffset));
+    return new SourceSpan.fromTokens(uri, begin, end);
   }
 
   SourceSpan spanFromNode(Node node) {
@@ -1500,10 +1572,10 @@ abstract class Compiler implements DiagnosticListener {
   Token processAndStripComments(Token currentToken) {
     Token firstToken = currentToken;
     Token prevToken;
-    while (currentToken.kind != EOF_TOKEN) {
-      if (identical(currentToken.kind, COMMENT_TOKEN)) {
+    while (currentToken.kind != Tokens.EOF_TOKEN) {
+      if (identical(currentToken.kind, Tokens.COMMENT_TOKEN)) {
         Token firstCommentToken = currentToken;
-        while (identical(currentToken.kind, COMMENT_TOKEN)) {
+        while (identical(currentToken.kind, Tokens.COMMENT_TOKEN)) {
           currentToken = currentToken.next;
         }
         commentMap[currentToken] = firstCommentToken;
@@ -1653,12 +1725,6 @@ abstract class Compiler implements DiagnosticListener {
   }
 }
 
-/// Returns `true` when [s] is private if used as an identifier.
-bool isPrivateName(String s) => !s.isEmpty && s.codeUnitAt(0) == $_;
-
-/// Returns `true` when [s] is public if used as an identifier.
-bool isPublicName(String s) => !isPrivateName(s);
-
 /// Information about suppressed warnings and hints for a given library.
 class SuppressionInfo {
   int warnings = 0;
@@ -1684,6 +1750,7 @@ class _CompilerCoreTypes implements CoreTypes {
   ClassElement futureClass;
   ClassElement iterableClass;
   ClassElement streamClass;
+  ClassElement resourceClass;
 
   _CompilerCoreTypes(this.compiler);
 
@@ -1701,6 +1768,9 @@ class _CompilerCoreTypes implements CoreTypes {
 
   @override
   InterfaceType get intType => intClass.computeType(compiler);
+
+  @override
+  InterfaceType get resourceType => resourceClass.computeType(compiler);
 
   @override
   InterfaceType listType([DartType elementType]) {

@@ -2,6 +2,8 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
+#include <cstring>
+
 #include "platform/assert.h"
 
 #include "vm/dart_api_impl.h"
@@ -13,6 +15,22 @@
 
 namespace dart {
 
+class TimelineRecorderOverride : public ValueObject {
+ public:
+  explicit TimelineRecorderOverride(TimelineEventRecorder* new_recorder)
+      : recorder_(Timeline::recorder()) {
+    Timeline::recorder_ = new_recorder;
+  }
+
+  ~TimelineRecorderOverride() {
+    Timeline::recorder_ = recorder_;
+  }
+
+ private:
+  TimelineEventRecorder* recorder_;
+};
+
+
 class TimelineTestHelper : public AllStatic {
  public:
   static void SetStream(TimelineEvent* event, TimelineStream* stream) {
@@ -20,12 +38,40 @@ class TimelineTestHelper : public AllStatic {
   }
 
   static TimelineEvent* FakeThreadEvent(
-      TimelineEventBlock* block, intptr_t ftid) {
+      TimelineEventBlock* block,
+      intptr_t ftid,
+      const char* label = "fake",
+      TimelineStream* stream = NULL) {
     TimelineEvent* event = block->StartEvent();
     ASSERT(event != NULL);
-    event->DurationBegin("fake");
+    event->DurationBegin(label);
     event->thread_ = OSThread::ThreadIdFromIntPtr(ftid);
+    if (stream != NULL) {
+      event->StreamInit(stream);
+    }
     return event;
+  }
+
+  static void FakeDuration(
+      TimelineEventRecorder* recorder,
+      const char* label,
+      int64_t start,
+      int64_t end) {
+    ASSERT(recorder != NULL);
+    ASSERT(start < end);
+    ASSERT(label != NULL);
+    TimelineEvent* event = recorder->StartEvent();
+    ASSERT(event != NULL);
+    event->Duration(label, start, end);
+  }
+
+  static void Clear(TimelineEventEndlessRecorder* recorder) {
+    ASSERT(recorder != NULL);
+    recorder->Clear();
+  }
+
+  static void FinishBlock(TimelineEventBlock* block) {
+    block->Finish();
   }
 };
 
@@ -146,10 +192,10 @@ TEST_CASE(TimelineEventArgumentsPrintJSON) {
 
 
 TEST_CASE(TimelineEventBufferPrintJSON) {
-  Isolate* isolate = Isolate::Current();
-  TimelineEventRecorder* recorder = isolate->timeline_event_recorder();
+  TimelineEventRecorder* recorder = Timeline::recorder();
   JSONStream js;
-  recorder->PrintJSON(&js);
+  TimelineEventFilter filter;
+  recorder->PrintJSON(&js, &filter);
   // Check the type. This test will fail if we ever make Timeline public.
   EXPECT_SUBSTRING("\"type\":\"_Timeline\"", js.ToCString());
   // Check that there is a traceEvents array.
@@ -181,6 +227,7 @@ class EventCounterRecorder : public TimelineEventStreamingRecorder {
 
 TEST_CASE(TimelineEventStreamingRecorderBasic) {
   EventCounterRecorder* recorder = new EventCounterRecorder();
+  TimelineRecorderOverride override(recorder);
 
   // Initial counts are all zero.
   for (intptr_t i = TimelineEvent::kNone + 1;
@@ -192,7 +239,6 @@ TEST_CASE(TimelineEventStreamingRecorderBasic) {
   // Create a test stream.
   TimelineStream stream;
   stream.Init("testStream", true);
-  stream.set_recorder(recorder);
 
   TimelineEvent* event = NULL;
 
@@ -214,8 +260,9 @@ TEST_CASE(TimelineEventStreamingRecorderBasic) {
 
   event = stream.StartEvent();
   EXPECT_EQ(0, recorder->CountFor(TimelineEvent::kAsyncBegin));
-  int64_t async_id = event->AsyncBegin("asyncBeginCabbage");
+  int64_t async_id = recorder->GetNextAsyncId();
   EXPECT(async_id >= 0);
+  event->AsyncBegin("asyncBeginCabbage", async_id);
   EXPECT_EQ(0, recorder->CountFor(TimelineEvent::kAsyncBegin));
   event->Complete();
   EXPECT_EQ(1, recorder->CountFor(TimelineEvent::kAsyncBegin));
@@ -236,6 +283,12 @@ TEST_CASE(TimelineEventStreamingRecorderBasic) {
 }
 
 
+static bool LabelMatch(TimelineEvent* event, const char* label) {
+  ASSERT(event != NULL);
+  return strcmp(event->label(), label) == 0;
+}
+
+
 TEST_CASE(TimelineAnalysis_ThreadBlockCount) {
   TimelineEventEndlessRecorder* recorder = new TimelineEventEndlessRecorder();
   ASSERT(recorder != NULL);
@@ -250,26 +303,25 @@ TEST_CASE(TimelineAnalysis_ThreadBlockCount) {
   USE(block_3_0);
 
   // Add events to each block for thread 1.
-  TimelineTestHelper::FakeThreadEvent(block_1_2, 1);
-  TimelineTestHelper::FakeThreadEvent(block_1_2, 1);
-  TimelineTestHelper::FakeThreadEvent(block_1_2, 1);
+  TimelineTestHelper::FakeThreadEvent(block_1_2, 1, "B1");
+  TimelineTestHelper::FakeThreadEvent(block_1_2, 1, "B2");
+  TimelineTestHelper::FakeThreadEvent(block_1_2, 1, "B3");
   // Sleep to ensure timestamps differ.
   OS::Sleep(1);
-  TimelineTestHelper::FakeThreadEvent(block_1_0, 1);
+  TimelineTestHelper::FakeThreadEvent(block_1_0, 1, "A1");
   OS::Sleep(1);
-  TimelineTestHelper::FakeThreadEvent(block_1_1, 1);
-  TimelineTestHelper::FakeThreadEvent(block_1_1, 1);
+  TimelineTestHelper::FakeThreadEvent(block_1_1, 1, "C1");
+  TimelineTestHelper::FakeThreadEvent(block_1_1, 1, "C2");
   OS::Sleep(1);
 
   // Add events to each block for thread 2.
-  TimelineTestHelper::FakeThreadEvent(block_2_0, 2);
-  TimelineTestHelper::FakeThreadEvent(block_2_0, 2);
-  TimelineTestHelper::FakeThreadEvent(block_2_0, 2);
-  TimelineTestHelper::FakeThreadEvent(block_2_0, 2);
-  TimelineTestHelper::FakeThreadEvent(block_2_0, 2);
-  TimelineTestHelper::FakeThreadEvent(block_2_0, 2);
+  TimelineTestHelper::FakeThreadEvent(block_2_0, 2, "A");
+  TimelineTestHelper::FakeThreadEvent(block_2_0, 2, "B");
+  TimelineTestHelper::FakeThreadEvent(block_2_0, 2, "C");
+  TimelineTestHelper::FakeThreadEvent(block_2_0, 2, "D");
+  TimelineTestHelper::FakeThreadEvent(block_2_0, 2, "E");
+  TimelineTestHelper::FakeThreadEvent(block_2_0, 2, "F");
 
-  Thread* thread = Thread::Current();
   Zone* zone = thread->zone();
   Isolate* isolate = thread->isolate();
 
@@ -309,6 +361,248 @@ TEST_CASE(TimelineAnalysis_ThreadBlockCount) {
   EXPECT_EQ(thread_2->At(0), block_2_0);
   // Verify that block_2_0 has six events.
   EXPECT_EQ(6, block_2_0->length());
+
+  {
+    TimelineAnalysisThreadEventIterator it(thread_1);
+    // Six events spread across three blocks.
+    EXPECT(it.HasNext());
+    EXPECT(LabelMatch(it.Next(), "B1"));
+    EXPECT(it.HasNext());
+    EXPECT(LabelMatch(it.Next(), "B2"));
+    EXPECT(it.HasNext());
+    EXPECT(LabelMatch(it.Next(), "B3"));
+    EXPECT(it.HasNext());
+    EXPECT(LabelMatch(it.Next(), "A1"));
+    EXPECT(it.HasNext());
+    EXPECT(LabelMatch(it.Next(), "C1"));
+    EXPECT(it.HasNext());
+    EXPECT(LabelMatch(it.Next(), "C2"));
+    EXPECT(!it.HasNext());
+  }
+
+  {
+    TimelineAnalysisThreadEventIterator it(thread_2);
+    // Six events spread across three blocks.
+    EXPECT(it.HasNext());
+    EXPECT(LabelMatch(it.Next(), "A"));
+    EXPECT(it.HasNext());
+    EXPECT(LabelMatch(it.Next(), "B"));
+    EXPECT(it.HasNext());
+    EXPECT(LabelMatch(it.Next(), "C"));
+    EXPECT(it.HasNext());
+    EXPECT(LabelMatch(it.Next(), "D"));
+    EXPECT(it.HasNext());
+    EXPECT(LabelMatch(it.Next(), "E"));
+    EXPECT(it.HasNext());
+    EXPECT(LabelMatch(it.Next(), "F"));
+    EXPECT(!it.HasNext());
+  }
+}
+
+
+TEST_CASE(TimelineRingRecorderJSONOrder) {
+  TimelineStream stream;
+  stream.Init("testStream", true);
+
+  TimelineEventRingRecorder* recorder =
+      new TimelineEventRingRecorder(TimelineEventBlock::kBlockSize * 2);
+
+  TimelineEventBlock* block_0 = recorder->GetNewBlock();
+  EXPECT(block_0 != NULL);
+  TimelineEventBlock* block_1 = recorder->GetNewBlock();
+  EXPECT(block_1 != NULL);
+  // Test that we wrapped.
+  EXPECT(block_0 == recorder->GetNewBlock());
+
+  // Emit the earlier event into block_1.
+  TimelineTestHelper::FakeThreadEvent(block_1, 2, "Alpha", &stream);
+  OS::Sleep(1);
+  // Emit the later event into block_0.
+  TimelineTestHelper::FakeThreadEvent(block_0, 2, "Beta", &stream);
+
+  TimelineTestHelper::FinishBlock(block_0);
+  TimelineTestHelper::FinishBlock(block_1);
+
+  JSONStream js;
+  TimelineEventFilter filter;
+  recorder->PrintJSON(&js, &filter);
+  // trace-event has a requirement that events for a thread must have
+  // monotonically increasing timestamps.
+  // Verify that "Alpha" comes before "Beta" even though "Beta" is in the first
+  // block.
+  const char* alpha = strstr(js.ToCString(), "Alpha");
+  const char* beta = strstr(js.ToCString(), "Beta");
+  EXPECT(alpha < beta);
+}
+
+
+TEST_CASE(TimelinePauses_Basic) {
+  TimelineEventEndlessRecorder* recorder = new TimelineEventEndlessRecorder();
+  ASSERT(recorder != NULL);
+  Zone* zone = thread->zone();
+  Isolate* isolate = thread->isolate();
+  ThreadId tid = OSThread::GetCurrentThreadId();
+
+  // Test case.
+  TimelineTestHelper::FakeDuration(recorder, "a", 0, 10);
+  {
+    TimelinePauses pauses(zone, isolate, recorder);
+    pauses.Setup();
+    pauses.CalculatePauseTimesForThread(tid);
+    EXPECT(!pauses.has_error());
+    EXPECT_EQ(10, pauses.InclusiveTime("a"));
+    EXPECT_EQ(10, pauses.ExclusiveTime("a"));
+    EXPECT_EQ(10, pauses.MaxInclusiveTime("a"));
+    EXPECT_EQ(10, pauses.MaxExclusiveTime("a"));
+  }
+  TimelineTestHelper::Clear(recorder);
+
+  // Test case.
+  TimelineTestHelper::FakeDuration(recorder, "a", 0, 10);
+  TimelineTestHelper::FakeDuration(recorder, "b", 0, 10);
+  {
+    TimelinePauses pauses(zone, isolate, recorder);
+    pauses.Setup();
+    pauses.CalculatePauseTimesForThread(tid);
+    EXPECT(!pauses.has_error());
+    EXPECT_EQ(10, pauses.InclusiveTime("a"));
+    EXPECT_EQ(0, pauses.ExclusiveTime("a"));
+    EXPECT_EQ(10, pauses.MaxInclusiveTime("a"));
+    EXPECT_EQ(0, pauses.MaxExclusiveTime("a"));
+    EXPECT_EQ(10, pauses.InclusiveTime("b"));
+    EXPECT_EQ(10, pauses.ExclusiveTime("b"));
+    EXPECT_EQ(10, pauses.MaxInclusiveTime("b"));
+    EXPECT_EQ(10, pauses.MaxExclusiveTime("b"));
+  }
+  TimelineTestHelper::Clear(recorder);
+
+  // Test case.
+  TimelineTestHelper::FakeDuration(recorder, "a", 0, 10);
+  TimelineTestHelper::FakeDuration(recorder, "b", 1, 8);
+  {
+    TimelinePauses pauses(zone, isolate, recorder);
+    pauses.Setup();
+    pauses.CalculatePauseTimesForThread(tid);
+    EXPECT(!pauses.has_error());
+    EXPECT_EQ(10, pauses.InclusiveTime("a"));
+    EXPECT_EQ(3, pauses.ExclusiveTime("a"));
+    EXPECT_EQ(10, pauses.MaxInclusiveTime("a"));
+    EXPECT_EQ(3, pauses.MaxExclusiveTime("a"));
+    EXPECT_EQ(7, pauses.InclusiveTime("b"));
+    EXPECT_EQ(7, pauses.ExclusiveTime("b"));
+    EXPECT_EQ(7, pauses.MaxInclusiveTime("b"));
+    EXPECT_EQ(7, pauses.MaxExclusiveTime("b"));
+  }
+  TimelineTestHelper::Clear(recorder);
+
+  // Test case.
+  TimelineTestHelper::FakeDuration(recorder, "a", 0, 10);
+  TimelineTestHelper::FakeDuration(recorder, "b", 0, 1);
+  TimelineTestHelper::FakeDuration(recorder, "b", 1, 2);
+  TimelineTestHelper::FakeDuration(recorder, "b", 2, 3);
+  TimelineTestHelper::FakeDuration(recorder, "b", 3, 4);
+  TimelineTestHelper::FakeDuration(recorder, "b", 4, 5);
+  TimelineTestHelper::FakeDuration(recorder, "b", 5, 6);
+  TimelineTestHelper::FakeDuration(recorder, "b", 6, 7);
+  TimelineTestHelper::FakeDuration(recorder, "b", 7, 8);
+  TimelineTestHelper::FakeDuration(recorder, "b", 8, 9);
+  TimelineTestHelper::FakeDuration(recorder, "b", 9, 10);
+  {
+    TimelinePauses pauses(zone, isolate, recorder);
+    pauses.Setup();
+    pauses.CalculatePauseTimesForThread(tid);
+    EXPECT(!pauses.has_error());
+    EXPECT_EQ(10, pauses.InclusiveTime("a"));
+    EXPECT_EQ(0, pauses.ExclusiveTime("a"));
+    EXPECT_EQ(10, pauses.MaxInclusiveTime("a"));
+    EXPECT_EQ(0, pauses.MaxExclusiveTime("a"));
+    EXPECT_EQ(10, pauses.InclusiveTime("b"));
+    EXPECT_EQ(10, pauses.ExclusiveTime("b"));
+    EXPECT_EQ(1, pauses.MaxInclusiveTime("b"));
+    EXPECT_EQ(1, pauses.MaxExclusiveTime("b"));
+  }
+  TimelineTestHelper::Clear(recorder);
+
+  // Test case.
+  TimelineTestHelper::FakeDuration(recorder, "a", 0, 10);
+  TimelineTestHelper::FakeDuration(recorder, "b", 0, 5);
+  TimelineTestHelper::FakeDuration(recorder, "c", 1, 4);
+  TimelineTestHelper::FakeDuration(recorder, "d", 5, 10);
+
+  {
+    TimelinePauses pauses(zone, isolate, recorder);
+    pauses.Setup();
+    pauses.CalculatePauseTimesForThread(tid);
+    EXPECT(!pauses.has_error());
+    EXPECT_EQ(10, pauses.InclusiveTime("a"));
+    EXPECT_EQ(0, pauses.ExclusiveTime("a"));
+    EXPECT_EQ(10, pauses.MaxInclusiveTime("a"));
+    EXPECT_EQ(0, pauses.MaxExclusiveTime("a"));
+    EXPECT_EQ(5, pauses.InclusiveTime("b"));
+    EXPECT_EQ(2, pauses.ExclusiveTime("b"));
+    EXPECT_EQ(5, pauses.MaxInclusiveTime("b"));
+    EXPECT_EQ(2, pauses.MaxExclusiveTime("b"));
+    EXPECT_EQ(3, pauses.InclusiveTime("c"));
+    EXPECT_EQ(3, pauses.ExclusiveTime("c"));
+    EXPECT_EQ(3, pauses.MaxInclusiveTime("c"));
+    EXPECT_EQ(3, pauses.MaxExclusiveTime("c"));
+    EXPECT_EQ(5, pauses.InclusiveTime("d"));
+    EXPECT_EQ(5, pauses.ExclusiveTime("d"));
+    EXPECT_EQ(5, pauses.MaxInclusiveTime("d"));
+    EXPECT_EQ(5, pauses.MaxExclusiveTime("d"));
+  }
+  TimelineTestHelper::Clear(recorder);
+
+  // Test case.
+  TimelineTestHelper::FakeDuration(recorder, "a", 0, 10);
+  TimelineTestHelper::FakeDuration(recorder, "b", 1, 9);
+  TimelineTestHelper::FakeDuration(recorder, "c", 2, 8);
+  TimelineTestHelper::FakeDuration(recorder, "d", 3, 7);
+  TimelineTestHelper::FakeDuration(recorder, "e", 4, 6);
+
+  {
+    TimelinePauses pauses(zone, isolate, recorder);
+    pauses.Setup();
+    pauses.CalculatePauseTimesForThread(tid);
+    EXPECT(!pauses.has_error());
+    EXPECT_EQ(10, pauses.InclusiveTime("a"));
+    EXPECT_EQ(2, pauses.ExclusiveTime("a"));
+    EXPECT_EQ(10, pauses.MaxInclusiveTime("a"));
+    EXPECT_EQ(2, pauses.MaxExclusiveTime("a"));
+    EXPECT_EQ(8, pauses.InclusiveTime("b"));
+    EXPECT_EQ(2, pauses.ExclusiveTime("b"));
+    EXPECT_EQ(8, pauses.MaxInclusiveTime("b"));
+    EXPECT_EQ(2, pauses.MaxExclusiveTime("b"));
+    EXPECT_EQ(6, pauses.InclusiveTime("c"));
+    EXPECT_EQ(2, pauses.ExclusiveTime("c"));
+    EXPECT_EQ(6, pauses.MaxInclusiveTime("c"));
+    EXPECT_EQ(2, pauses.MaxExclusiveTime("c"));
+    EXPECT_EQ(4, pauses.InclusiveTime("d"));
+    EXPECT_EQ(2, pauses.ExclusiveTime("d"));
+    EXPECT_EQ(4, pauses.MaxInclusiveTime("d"));
+    EXPECT_EQ(2, pauses.MaxExclusiveTime("d"));
+    EXPECT_EQ(2, pauses.InclusiveTime("e"));
+    EXPECT_EQ(2, pauses.ExclusiveTime("e"));
+    EXPECT_EQ(2, pauses.MaxInclusiveTime("e"));
+    EXPECT_EQ(2, pauses.MaxExclusiveTime("e"));
+  }
+  TimelineTestHelper::Clear(recorder);
+
+  // Test case.
+  TimelineTestHelper::FakeDuration(recorder, "a", 0, 10);
+  TimelineTestHelper::FakeDuration(recorder, "a", 1, 9);
+
+  {
+    TimelinePauses pauses(zone, isolate, recorder);
+    pauses.Setup();
+    pauses.CalculatePauseTimesForThread(tid);
+    EXPECT(!pauses.has_error());
+    EXPECT_EQ(10, pauses.InclusiveTime("a"));
+    EXPECT_EQ(10, pauses.ExclusiveTime("a"));
+    EXPECT_EQ(10, pauses.MaxInclusiveTime("a"));
+    EXPECT_EQ(8, pauses.MaxExclusiveTime("a"));
+  }
+  TimelineTestHelper::Clear(recorder);
 }
 
 }  // namespace dart

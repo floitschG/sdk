@@ -24,6 +24,8 @@ class ThreadRegistry {
         remaining_(0),
         round_(0) {}
 
+  ~ThreadRegistry();
+
   // Bring all threads in this isolate to a safepoint. The caller is
   // expected to be implicitly at a safepoint. The threads will wait
   // until ResumeAllThreads is called. First participates in any
@@ -46,10 +48,11 @@ class ThreadRegistry {
     CheckSafepointLocked();
   }
 
-  bool RestoreStateTo(Thread* thread, Thread::State* state) {
+  bool RestoreStateTo(Thread* thread, Thread::State* state,
+                      bool bypass_safepoint) {
     MonitorLocker ml(monitor_);
     // Wait for any rendezvous in progress.
-    while (in_rendezvous_) {
+    while (!bypass_safepoint && in_rendezvous_) {
       ml.Wait(Monitor::kNoTimeout);
     }
     Entry* entry = FindEntry(thread);
@@ -81,14 +84,15 @@ class ThreadRegistry {
     return false;
   }
 
-  void SaveStateFrom(Thread* thread, const Thread::State& state) {
+  void SaveStateFrom(Thread* thread, const Thread::State& state,
+                     bool bypass_safepoint) {
     MonitorLocker ml(monitor_);
     Entry* entry = FindEntry(thread);
     ASSERT(entry != NULL);
     ASSERT(entry->scheduled);
     entry->scheduled = false;
     entry->state = state;
-    if (in_rendezvous_) {
+    if (!bypass_safepoint && in_rendezvous_) {
       // Don't wait for this thread.
       ASSERT(remaining_ > 0);
       if (--remaining_ == 0) {
@@ -136,13 +140,38 @@ class ThreadRegistry {
     }
   }
 
- private:
+  void PruneThread(Thread* thread);
+
+  void CloseAllTimelineBlocks();
+
   struct Entry {
+    // NOTE: |thread| is deleted automatically when the thread exits.
+    // In other words, it is not safe to dereference |thread| unless you are on
+    // the thread itself.
     Thread* thread;
     bool scheduled;
     Thread::State state;
   };
 
+  class EntryIterator {
+   public:
+    explicit EntryIterator(ThreadRegistry* registry);
+    ~EntryIterator();
+
+    // Returns false when there are no more entries.
+    bool HasNext() const;
+
+    // Returns the next entry and moves forward.
+    const Entry& Next();
+
+   private:
+    void Reset(ThreadRegistry* registry);
+
+    intptr_t index_;
+    ThreadRegistry* registry_;
+  };
+
+ private:
   // Returns Entry corresponding to thread in registry or NULL.
   // Note: Lock should be taken before this function is called.
   // TODO(koda): Add method Monitor::IsOwnedByCurrentThread.
@@ -154,6 +183,11 @@ class ThreadRegistry {
     }
     return NULL;
   }
+
+  // Close the timeline block cache inside entry.
+  // NOTE: Lock should be taken before this function is called.
+  // NOTE: Recorder lock should be taken before this function is called.
+  void CloseTimelineBlockLocked(Entry* entry);
 
   // Note: Lock should be taken before this function is called.
   void CheckSafepointLocked();

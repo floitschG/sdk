@@ -8,13 +8,13 @@ import 'package:async_helper/async_helper.dart';
 import "package:expect/expect.dart";
 import 'dart:async';
 
-Future<int> voidToIntFuture() {
+Future<int> createIntFuture() {
   return new Future<int>.value(499);
 }
 
 unnamed() {
   asyncStart();
-  new Future<int>(voidToIntFuture)
+  new Future<int>(createIntFuture)
       .then((x) {
     Expect.equals(499, x);
     asyncEnd();
@@ -23,7 +23,7 @@ unnamed() {
 
 delayed() {
   asyncStart();
-  new Future<int>.delayed(const Duration(milliseconds: 2), voidToIntFuture)
+  new Future<int>.delayed(const Duration(milliseconds: 2), createIntFuture)
       .then((x) {
     Expect.equals(499, x);
     asyncEnd();
@@ -32,7 +32,7 @@ delayed() {
 
 microtask() {
   asyncStart();
-  new Future<int>.microtask(voidToIntFuture)
+  new Future<int>.microtask(createIntFuture)
       .then((x) {
     Expect.equals(499, x);
     asyncEnd();
@@ -41,7 +41,7 @@ microtask() {
 
 sync() {
   asyncStart();
-  new Future<int>.sync(voidToIntFuture)
+  new Future<int>.sync(createIntFuture)
       .then((x) {
     Expect.equals(499, x);
     asyncEnd();
@@ -49,6 +49,7 @@ sync() {
 }
 
 main() {
+  asyncStart();
   // Test that all the Future constructors take functions that return a Future
   // as argument.
   // In particular the constructors must not type their argument as
@@ -57,4 +58,5 @@ main() {
   delayed();
   microtask();
   sync();
+  asyncEnd();
 }

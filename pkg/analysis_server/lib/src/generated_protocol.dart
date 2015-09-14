@@ -4339,12 +4339,15 @@ class SearchFindTopLevelDeclarationsResult implements HasToJson {
  * {
  *   "file": FilePath
  *   "offset": int
+ *   "superOnly": optional bool
  * }
  */
 class SearchGetTypeHierarchyParams implements HasToJson {
   String _file;
 
   int _offset;
+
+  bool _superOnly;
 
   /**
    * The file containing the declaration or reference to the type for which a
@@ -4374,9 +4377,24 @@ class SearchGetTypeHierarchyParams implements HasToJson {
     this._offset = value;
   }
 
-  SearchGetTypeHierarchyParams(String file, int offset) {
+  /**
+   * True if the client is only requesting superclasses and interfaces
+   * hierarchy.
+   */
+  bool get superOnly => _superOnly;
+
+  /**
+   * True if the client is only requesting superclasses and interfaces
+   * hierarchy.
+   */
+  void set superOnly(bool value) {
+    this._superOnly = value;
+  }
+
+  SearchGetTypeHierarchyParams(String file, int offset, {bool superOnly}) {
     this.file = file;
     this.offset = offset;
+    this.superOnly = superOnly;
   }
 
   factory SearchGetTypeHierarchyParams.fromJson(JsonDecoder jsonDecoder, String jsonPath, Object json) {
@@ -4396,7 +4414,11 @@ class SearchGetTypeHierarchyParams implements HasToJson {
       } else {
         throw jsonDecoder.missingKey(jsonPath, "offset");
       }
-      return new SearchGetTypeHierarchyParams(file, offset);
+      bool superOnly;
+      if (json.containsKey("superOnly")) {
+        superOnly = jsonDecoder._decodeBool(jsonPath + ".superOnly", json["superOnly"]);
+      }
+      return new SearchGetTypeHierarchyParams(file, offset, superOnly: superOnly);
     } else {
       throw jsonDecoder.mismatch(jsonPath, "search.getTypeHierarchy params", json);
     }
@@ -4411,6 +4433,9 @@ class SearchGetTypeHierarchyParams implements HasToJson {
     Map<String, dynamic> result = {};
     result["file"] = file;
     result["offset"] = offset;
+    if (superOnly != null) {
+      result["superOnly"] = superOnly;
+    }
     return result;
   }
 
@@ -4425,7 +4450,8 @@ class SearchGetTypeHierarchyParams implements HasToJson {
   bool operator==(other) {
     if (other is SearchGetTypeHierarchyParams) {
       return file == other.file &&
-          offset == other.offset;
+          offset == other.offset &&
+          superOnly == other.superOnly;
     }
     return false;
   }
@@ -4435,6 +4461,7 @@ class SearchGetTypeHierarchyParams implements HasToJson {
     int hash = 0;
     hash = _JenkinsSmiHash.combine(hash, file.hashCode);
     hash = _JenkinsSmiHash.combine(hash, offset.hashCode);
+    hash = _JenkinsSmiHash.combine(hash, superOnly.hashCode);
     return _JenkinsSmiHash.finish(hash);
   }
 }
@@ -7540,6 +7567,7 @@ class AnalysisErrorType implements Enum {
  *   "enableDeferredLoading": optional bool
  *   "enableEnums": optional bool
  *   "enableNullAwareOperators": optional bool
+ *   "enableSuperMixins": optional bool
  *   "generateDart2jsHints": optional bool
  *   "generateHints": optional bool
  *   "generateLints": optional bool
@@ -7553,6 +7581,8 @@ class AnalysisOptions implements HasToJson {
   bool _enableEnums;
 
   bool _enableNullAwareOperators;
+
+  bool _enableSuperMixins;
 
   bool _generateDart2jsHints;
 
@@ -7629,6 +7659,20 @@ class AnalysisOptions implements HasToJson {
   }
 
   /**
+   * True if the client wants to enable spport for the proposed "less
+   * restricted mixins" proposal (DEP 34).
+   */
+  bool get enableSuperMixins => _enableSuperMixins;
+
+  /**
+   * True if the client wants to enable spport for the proposed "less
+   * restricted mixins" proposal (DEP 34).
+   */
+  void set enableSuperMixins(bool value) {
+    this._enableSuperMixins = value;
+  }
+
+  /**
    * True if hints that are specific to dart2js should be generated. This
    * option is ignored if generateHints is false.
    */
@@ -7670,11 +7714,12 @@ class AnalysisOptions implements HasToJson {
     this._generateLints = value;
   }
 
-  AnalysisOptions({bool enableAsync, bool enableDeferredLoading, bool enableEnums, bool enableNullAwareOperators, bool generateDart2jsHints, bool generateHints, bool generateLints}) {
+  AnalysisOptions({bool enableAsync, bool enableDeferredLoading, bool enableEnums, bool enableNullAwareOperators, bool enableSuperMixins, bool generateDart2jsHints, bool generateHints, bool generateLints}) {
     this.enableAsync = enableAsync;
     this.enableDeferredLoading = enableDeferredLoading;
     this.enableEnums = enableEnums;
     this.enableNullAwareOperators = enableNullAwareOperators;
+    this.enableSuperMixins = enableSuperMixins;
     this.generateDart2jsHints = generateDart2jsHints;
     this.generateHints = generateHints;
     this.generateLints = generateLints;
@@ -7701,6 +7746,10 @@ class AnalysisOptions implements HasToJson {
       if (json.containsKey("enableNullAwareOperators")) {
         enableNullAwareOperators = jsonDecoder._decodeBool(jsonPath + ".enableNullAwareOperators", json["enableNullAwareOperators"]);
       }
+      bool enableSuperMixins;
+      if (json.containsKey("enableSuperMixins")) {
+        enableSuperMixins = jsonDecoder._decodeBool(jsonPath + ".enableSuperMixins", json["enableSuperMixins"]);
+      }
       bool generateDart2jsHints;
       if (json.containsKey("generateDart2jsHints")) {
         generateDart2jsHints = jsonDecoder._decodeBool(jsonPath + ".generateDart2jsHints", json["generateDart2jsHints"]);
@@ -7713,7 +7762,7 @@ class AnalysisOptions implements HasToJson {
       if (json.containsKey("generateLints")) {
         generateLints = jsonDecoder._decodeBool(jsonPath + ".generateLints", json["generateLints"]);
       }
-      return new AnalysisOptions(enableAsync: enableAsync, enableDeferredLoading: enableDeferredLoading, enableEnums: enableEnums, enableNullAwareOperators: enableNullAwareOperators, generateDart2jsHints: generateDart2jsHints, generateHints: generateHints, generateLints: generateLints);
+      return new AnalysisOptions(enableAsync: enableAsync, enableDeferredLoading: enableDeferredLoading, enableEnums: enableEnums, enableNullAwareOperators: enableNullAwareOperators, enableSuperMixins: enableSuperMixins, generateDart2jsHints: generateDart2jsHints, generateHints: generateHints, generateLints: generateLints);
     } else {
       throw jsonDecoder.mismatch(jsonPath, "AnalysisOptions", json);
     }
@@ -7732,6 +7781,9 @@ class AnalysisOptions implements HasToJson {
     }
     if (enableNullAwareOperators != null) {
       result["enableNullAwareOperators"] = enableNullAwareOperators;
+    }
+    if (enableSuperMixins != null) {
+      result["enableSuperMixins"] = enableSuperMixins;
     }
     if (generateDart2jsHints != null) {
       result["generateDart2jsHints"] = generateDart2jsHints;
@@ -7755,6 +7807,7 @@ class AnalysisOptions implements HasToJson {
           enableDeferredLoading == other.enableDeferredLoading &&
           enableEnums == other.enableEnums &&
           enableNullAwareOperators == other.enableNullAwareOperators &&
+          enableSuperMixins == other.enableSuperMixins &&
           generateDart2jsHints == other.generateDart2jsHints &&
           generateHints == other.generateHints &&
           generateLints == other.generateLints;
@@ -7769,6 +7822,7 @@ class AnalysisOptions implements HasToJson {
     hash = _JenkinsSmiHash.combine(hash, enableDeferredLoading.hashCode);
     hash = _JenkinsSmiHash.combine(hash, enableEnums.hashCode);
     hash = _JenkinsSmiHash.combine(hash, enableNullAwareOperators.hashCode);
+    hash = _JenkinsSmiHash.combine(hash, enableSuperMixins.hashCode);
     hash = _JenkinsSmiHash.combine(hash, generateDart2jsHints.hashCode);
     hash = _JenkinsSmiHash.combine(hash, generateHints.hashCode);
     hash = _JenkinsSmiHash.combine(hash, generateLints.hashCode);
@@ -11099,14 +11153,14 @@ class NavigationRegion implements HasToJson {
   /**
    * The indexes of the targets (in the enclosing navigation response) to which
    * the given region is bound. By opening the target, clients can implement
-   * one form of navigation.
+   * one form of navigation. This list cannot be empty.
    */
   List<int> get targets => _targets;
 
   /**
    * The indexes of the targets (in the enclosing navigation response) to which
    * the given region is bound. By opening the target, clients can implement
-   * one form of navigation.
+   * one form of navigation. This list cannot be empty.
    */
   void set targets(List<int> value) {
     assert(value != null);

@@ -223,8 +223,6 @@ class JavaScriptBackend extends Backend {
   static final Uri DART_JS_HELPER = new Uri(scheme: 'dart', path: '_js_helper');
   static final Uri DART_INTERCEPTORS =
       new Uri(scheme: 'dart', path: '_interceptors');
-  static final Uri DART_INTERNAL =
-      new Uri(scheme: 'dart', path: '_internal');
   static final Uri DART_FOREIGN_HELPER =
       new Uri(scheme: 'dart', path: '_foreign_helper');
   static final Uri DART_JS_MIRRORS =
@@ -235,8 +233,8 @@ class JavaScriptBackend extends Backend {
       new Uri(scheme: 'dart', path: '_js_embedded_names');
   static final Uri DART_ISOLATE_HELPER =
       new Uri(scheme: 'dart', path: '_isolate_helper');
-  static final Uri DART_HTML =
-      new Uri(scheme: 'dart', path: 'html');
+  static final Uri PACKAGE_LOOKUP_MAP =
+      new Uri(scheme: 'package', path: 'lookup_map/lookup_map.dart');
 
   static const String INVOKE_ON = '_getCachedInvocation';
   static const String START_ROOT_ISOLATE = 'startRootIsolate';
@@ -273,6 +271,7 @@ class JavaScriptBackend extends Backend {
   FunctionInlineCache inlineCache = new FunctionInlineCache();
 
   LibraryElement jsHelperLibrary;
+  LibraryElement asyncLibrary;
   LibraryElement interceptorsLibrary;
   LibraryElement foreignLibrary;
   LibraryElement isolateHelperLibrary;
@@ -333,10 +332,13 @@ class JavaScriptBackend extends Backend {
 
   ClassElement jsInvocationMirrorClass;
 
-  /// If [true], the compiler will emit code that writes the name of the current
-  /// method together with its class and library to the console the first time
-  /// the method is called.
-  static const bool TRACE_CALLS = false;
+  /// If [true], the compiler will emit code that logs whenever a method is
+  /// called. When TRACE_METHOD is 'console' this will be logged
+  /// directly in the JavaScript console. When TRACE_METHOD is 'post' the
+  /// information will be sent to a server via a POST request.
+  static const String TRACE_METHOD = const String.fromEnvironment('traceCalls');
+  static const bool TRACE_CALLS =
+    TRACE_METHOD == 'post' || TRACE_METHOD == 'console';
   Element traceHelper;
 
   TypeMask get stringType => compiler.typesTask.stringType;
@@ -608,6 +610,9 @@ class JavaScriptBackend extends Backend {
   /// constructors for custom elements.
   CustomElementsAnalysis customElementsAnalysis;
 
+  /// Codegen support for tree-shaking entries of `LookupMap`.
+  LookupMapAnalysis lookupMapAnalysis;
+
   /// Support for classifying `noSuchMethod` implementations.
   NoSuchMethodRegistry noSuchMethodRegistry;
 
@@ -641,6 +646,7 @@ class JavaScriptBackend extends Backend {
         compiler, namer, generateSourceMap, useStartupEmitter);
     typeVariableHandler = new TypeVariableHandler(compiler);
     customElementsAnalysis = new CustomElementsAnalysis(this);
+    lookupMapAnalysis = new LookupMapAnalysis(this);
     noSuchMethodRegistry = new NoSuchMethodRegistry(this);
     constantCompilerTask = new JavaScriptConstantTask(compiler);
     resolutionCallbacks = new JavaScriptResolutionCallbacks(this);
@@ -669,10 +675,11 @@ class JavaScriptBackend extends Backend {
   // TODO(karlklose): Split into findHelperFunction and findHelperClass and
   // add a check that the element has the expected kind.
   Element findHelper(String name) => find(jsHelperLibrary, name);
+  Element findAsyncHelper(String name) => find(asyncLibrary, name);
   Element findInterceptor(String name) => find(interceptorsLibrary, name);
 
   Element find(LibraryElement library, String name) {
-    Element element = library.findLocal(name);
+    Element element = library.implementation.findLocal(name);
     assert(invariant(library, element != null,
         message: "Element '$name' not found in '${library.canonicalUri}'."));
     return element;
@@ -888,7 +895,7 @@ class JavaScriptBackend extends Backend {
     if (enqueuer.isResolutionQueue) {
       cls.ensureResolved(compiler);
       cls.forEachMember((ClassElement classElement, Element member) {
-        if (member.name == Compiler.CALL_OPERATOR_NAME) {
+        if (member.name == Identifiers.call) {
           compiler.reportError(
               member,
               MessageKind.CALL_NOT_SUPPORTED_ON_NATIVE_CLASS);
@@ -948,11 +955,23 @@ class JavaScriptBackend extends Backend {
     }
   }
 
-  void registerCompileTimeConstant(ConstantValue constant, Registry registry) {
+  void registerCompileTimeConstant(ConstantValue constant, Registry registry,
+      {bool addForEmission: true}) {
     registerCompileTimeConstantInternal(constant, registry);
-    for (ConstantValue dependency in constant.getDependencies()) {
-      registerCompileTimeConstant(dependency, registry);
+
+    if (!registry.isForResolution &&
+        lookupMapAnalysis.isLookupMap(constant)) {
+      // Note: internally, this registration will temporarily remove the
+      // constant dependencies and add them later on-demand.
+      lookupMapAnalysis.registerLookupMapReference(constant);
     }
+
+    for (ConstantValue dependency in constant.getDependencies()) {
+      registerCompileTimeConstant(dependency, registry,
+          addForEmission: false);
+    }
+
+    if (addForEmission) constants.addCompileTimeConstantForEmission(constant);
   }
 
   void registerCompileTimeConstantInternal(ConstantValue constant,
@@ -971,6 +990,7 @@ class JavaScriptBackend extends Backend {
       enqueueInResolution(getCreateRuntimeType(), registry);
       registry.registerInstantiation(typeImplementation.rawType);
     }
+    lookupMapAnalysis.registerConstantKey(constant);
   }
 
   void registerInstantiatedConstantType(DartType type, Registry registry) {
@@ -995,7 +1015,7 @@ class JavaScriptBackend extends Backend {
                                 Registry registry) {
     assert(registry.isForResolution);
     ConstantValue constant = constants.getConstantValueForMetadata(metadata);
-    registerCompileTimeConstant(constant, registry);
+    registerCompileTimeConstant(constant, registry, addForEmission: false);
     metadataConstants.add(new Dependency(constant, annotatedElement));
   }
 
@@ -1047,7 +1067,7 @@ class JavaScriptBackend extends Backend {
           ClassElement implementation = cls.patch != null ? cls.patch : cls;
           ConstructorElement ctor = implementation.lookupConstructor(name);
           if (ctor == null
-              || (isPrivateName(name)
+              || (Name.isPrivateName(name)
                   && ctor.library != mapLiteralClass.library)) {
             compiler.internalError(mapLiteralClass,
                                    "Map literal class $mapLiteralClass missing "
@@ -1128,6 +1148,13 @@ class JavaScriptBackend extends Backend {
     }
 
     customElementsAnalysis.registerInstantiatedClass(cls, enqueuer);
+    if (!enqueuer.isResolutionQueue) {
+      lookupMapAnalysis.registerInstantiatedClass(cls);
+    }
+  }
+
+  void registerInstantiatedType(InterfaceType type, Registry registry) {
+    lookupMapAnalysis.registerInstantiatedType(type, registry);
   }
 
   void registerUseInterceptor(Enqueuer enqueuer) {
@@ -1160,7 +1187,8 @@ class JavaScriptBackend extends Backend {
     }
 
     if (TRACE_CALLS) {
-      traceHelper = findHelper('traceHelper');
+      traceHelper = findHelper(
+          TRACE_METHOD == 'console' ? 'consoleTraceHelper' : 'postTraceHelper');
       assert(traceHelper != null);
       enqueueInResolution(traceHelper, registry);
     }
@@ -1296,7 +1324,7 @@ class JavaScriptBackend extends Backend {
   void enableNoSuchMethod(Enqueuer world) {
     enqueue(world, getCreateInvocationMirror(), compiler.globalDependencies);
     world.registerInvocation(
-        new UniverseSelector(compiler.noSuchMethodSelector, null));
+        new UniverseSelector(Selectors.noSuchMethod_, null));
   }
 
   void enableIsolateSupport(Enqueuer enqueuer) {
@@ -1319,6 +1347,7 @@ class JavaScriptBackend extends Backend {
         Element element = find(isolateHelperLibrary, name);
         enqueuer.addToWorkList(element);
         compiler.globalDependencies.registerDependency(element);
+        helpersUsed.add(element.declaration);
       }
     } else {
       enqueuer.addToWorkList(find(isolateHelperLibrary, START_ROOT_ISOLATE));
@@ -1435,7 +1464,6 @@ class JavaScriptBackend extends Backend {
           constants.getConstantValueForVariable(element);
       if (initialValue != null) {
         registerCompileTimeConstant(initialValue, work.registry);
-        constants.addCompileTimeConstantForEmission(initialValue);
         // We don't need to generate code for static or top-level
         // variables. For instance variables, we may need to generate
         // the checked setter.
@@ -1473,16 +1501,8 @@ class JavaScriptBackend extends Backend {
    *
    * Invariant: [element] must be a declaration element.
    */
-  String assembleCode(Element element) {
+  String getGeneratedCode(Element element) {
     assert(invariant(element, element.isDeclaration));
-    var code = generatedCode[element];
-    if (namer is jsAst.TokenFinalizer) {
-      jsAst.TokenCounter counter = new jsAst.TokenCounter();
-      counter.countTokens(code);
-      // Avoid a warning.
-      var finalizer = namer;
-      finalizer.finalizeTokens();
-    }
     return jsAst.prettyPrint(generatedCode[element], compiler).getText();
   }
 
@@ -1850,43 +1870,47 @@ class JavaScriptBackend extends Backend {
   }
 
   Element getAsyncHelper() {
-    return findHelper("asyncHelper");
+    return findAsyncHelper("_asyncHelper");
+  }
+
+  Element getWrapBody() {
+    return findAsyncHelper("_wrapJsFunctionForAsync");
   }
 
   Element getYieldStar() {
-    ClassElement classElement = findHelper("IterationMarker");
+    ClassElement classElement = findAsyncHelper("_IterationMarker");
     classElement.ensureResolved(compiler);
     return classElement.lookupLocalMember("yieldStar");
   }
 
   Element getYieldSingle() {
-    ClassElement classElement = findHelper("IterationMarker");
+    ClassElement classElement = findAsyncHelper("_IterationMarker");
     classElement.ensureResolved(compiler);
     return classElement.lookupLocalMember("yieldSingle");
   }
 
   Element getSyncStarUncaughtError() {
-    ClassElement classElement = findHelper("IterationMarker");
+    ClassElement classElement = findAsyncHelper("_IterationMarker");
     classElement.ensureResolved(compiler);
     return classElement.lookupLocalMember("uncaughtError");
   }
 
   Element getAsyncStarHelper() {
-    return findHelper("asyncStarHelper");
+    return findAsyncHelper("_asyncStarHelper");
   }
 
   Element getStreamOfController() {
-    return findHelper("streamOfController");
+    return findAsyncHelper("_streamOfController");
   }
 
   Element getEndOfIteration() {
-    ClassElement classElement = findHelper("IterationMarker");
+    ClassElement classElement = findAsyncHelper("_IterationMarker");
     classElement.ensureResolved(compiler);
     return classElement.lookupLocalMember("endOfIteration");
   }
 
   Element getSyncStarIterable() {
-    ClassElement classElement = findHelper("SyncStarIterable");
+    ClassElement classElement = findAsyncHelper("_SyncStarIterable");
     classElement.ensureResolved(compiler);
     return classElement;
   }
@@ -1904,7 +1928,8 @@ class JavaScriptBackend extends Backend {
   }
 
   Element getASyncStarController() {
-    ClassElement classElement = findHelper("AsyncStarStreamController");
+    ClassElement classElement =
+        findAsyncHelper("_AsyncStarStreamController");
     classElement.ensureResolved(compiler);
     return classElement;
   }
@@ -2018,7 +2043,9 @@ class JavaScriptBackend extends Backend {
     Uri uri = library.canonicalUri;
     if (uri == DART_JS_HELPER) {
       jsHelperLibrary = library;
-    } else if (uri == DART_INTERNAL) {
+    } else if (uri == Uris.dart_async) {
+      asyncLibrary = library;
+    } else if (uri == Uris.dart__internal) {
       internalLibrary = library;
     } else if (uri ==  DART_INTERCEPTORS) {
       interceptorsLibrary = library;
@@ -2050,7 +2077,10 @@ class JavaScriptBackend extends Backend {
 
   Future onLibraryScanned(LibraryElement library, LibraryLoader loader) {
     return super.onLibraryScanned(library, loader).then((_) {
-      if (library.isPlatformLibrary && !library.isPatched) {
+      if (library.isPlatformLibrary &&
+          // Don't patch library currently disallowed.
+          !library.isSynthesized &&
+          !library.isPatched) {
         // Apply patch, if any.
         Uri patchUri = compiler.resolvePatchUri(library.canonicalUri.path);
         if (patchUri != null) {
@@ -2121,19 +2151,21 @@ class JavaScriptBackend extends Backend {
       } else if (uri == DART_EMBEDDED_NAMES) {
         jsGetNameEnum = find(library, 'JsGetName');
         jsBuiltinEnum = find(library, 'JsBuiltin');
-      } else if (uri == DART_HTML) {
+      } else if (uri == Uris.dart_html) {
         htmlLibraryIsLoaded = true;
+      } else if (uri == PACKAGE_LOOKUP_MAP) {
+        lookupMapAnalysis.init(library);
       }
       annotations.onLibraryScanned(library);
     });
   }
 
   Future onLibrariesLoaded(LoadedLibraries loadedLibraries) {
-    if (!loadedLibraries.containsLibrary(Compiler.DART_CORE)) {
+    if (!loadedLibraries.containsLibrary(Uris.dart_core)) {
       return new Future.value();
     }
 
-    assert(loadedLibraries.containsLibrary(Compiler.DART_CORE));
+    assert(loadedLibraries.containsLibrary(Uris.dart_core));
     assert(loadedLibraries.containsLibrary(DART_INTERCEPTORS));
     assert(loadedLibraries.containsLibrary(DART_JS_HELPER));
 
@@ -2276,8 +2308,7 @@ class JavaScriptBackend extends Backend {
    */
   bool matchesMirrorsMetaTarget(Element element) {
     if (metaTargetsUsed.isEmpty) return false;
-    for (Link link = element.metadata; !link.isEmpty; link = link.tail) {
-      MetadataAnnotation metadata = link.head;
+    for (MetadataAnnotation metadata in element.metadata) {
       // TODO(kasperl): It would be nice if we didn't have to resolve
       // all metadata but only stuff that potentially would match one
       // of the used meta targets.
@@ -2559,12 +2590,21 @@ class JavaScriptBackend extends Backend {
           registerCompileTimeConstant(
               dependency.constant,
               new CodegenRegistry(compiler,
-                  dependency.annotatedElement.analyzableElement.treeElements));
+                  dependency.annotatedElement.analyzableElement.treeElements),
+              addForEmission: false);
         }
         metadataConstants.clear();
       }
     }
     return true;
+  }
+
+  void onQueueClosed() {
+    lookupMapAnalysis.onQueueClosed();
+  }
+
+  void onCodegenStart() {
+    lookupMapAnalysis.onCodegenStart();
   }
 
   void onElementResolved(Element element, TreeElements elements) {
@@ -2579,7 +2619,7 @@ class JavaScriptBackend extends Backend {
     bool hasForceInline = false;
     bool hasNoThrows = false;
     bool hasNoSideEffects = false;
-    for (MetadataAnnotation metadata in element.metadata) {
+    for (MetadataAnnotation metadata in element.implementation.metadata) {
       metadata.ensureResolved(compiler);
       ConstantValue constantValue =
           compiler.constants.getConstantValue(metadata.constant);
@@ -2691,6 +2731,7 @@ class JavaScriptBackend extends Backend {
       enqueue(enqueuer, getAsyncHelper(), registry);
       enqueue(enqueuer, getSyncCompleterConstructor(), registry);
       enqueue(enqueuer, getStreamIteratorConstructor(), registry);
+      enqueue(enqueuer, getWrapBody(), registry);
     } else if (element.asyncMarker == AsyncMarker.SYNC_STAR) {
       ClassElement clsSyncStarIterable = getSyncStarIterable();
       clsSyncStarIterable.ensureResolved(compiler);
@@ -2710,6 +2751,7 @@ class JavaScriptBackend extends Backend {
       enqueue(enqueuer, getYieldStar(), registry);
       enqueue(enqueuer, getASyncStarControllerConstructor(), registry);
       enqueue(enqueuer, getStreamIteratorConstructor(), registry);
+      enqueue(enqueuer, getWrapBody(), registry);
     }
   }
 
@@ -2743,6 +2785,8 @@ class JavaScriptBackend extends Backend {
             compiler.currentElement,
             asyncHelper:
                 emitter.staticFunctionAccess(getAsyncHelper()),
+            wrapBody:
+                emitter.staticFunctionAccess(getWrapBody()),
             newCompleter: emitter.staticFunctionAccess(
                 getSyncCompleterConstructor()),
             safeVariableName: namer.safeVariablePrefixForAsyncRewrite,
@@ -2771,6 +2815,8 @@ class JavaScriptBackend extends Backend {
                 getAsyncStarHelper()),
             streamOfController: emitter.staticFunctionAccess(
                 getStreamOfController()),
+            wrapBody:
+                emitter.staticFunctionAccess(getWrapBody()),
             newController: emitter.staticFunctionAccess(
                 getASyncStarControllerConstructor()),
             safeVariableName: namer.safeVariablePrefixForAsyncRewrite,
@@ -2799,6 +2845,8 @@ class Annotations {
   ClassElement expectTrustTypeAnnotationsClass;
   ClassElement expectAssumeDynamicClass;
 
+  JavaScriptBackend get backend => compiler.backend;
+
   Annotations(this.compiler);
 
   void onLibraryScanned(LibraryElement library) {
@@ -2819,8 +2867,11 @@ class Annotations {
 
   /// Returns `true` if inlining is disabled for [element].
   bool noInline(Element element) {
-    // TODO(floitsch): restrict to test directory.
-    return _hasAnnotation(element, expectNoInlineClass);
+    if (_hasAnnotation(element, expectNoInlineClass)) {
+      // TODO(floitsch): restrict to elements from the test directory.
+      return true;
+    }
+    return _hasAnnotation(element, backend.noInlineClass);
   }
 
   /// Returns `true` if parameter and returns types should be trusted for
@@ -2837,19 +2888,21 @@ class Annotations {
   /// Returns `true` if [element] is annotated with [annotationClass].
   bool _hasAnnotation(Element element, ClassElement annotationClass) {
     if (annotationClass == null) return false;
-    for (Link<MetadataAnnotation> link = element.metadata;
-         !link.isEmpty;
-         link = link.tail) {
-      ConstantValue value =
-          compiler.constants.getConstantValue(link.head.constant);
-      if (value.isConstructedObject) {
-        ConstructedConstantValue constructedConstant = value;
-        if (constructedConstant.type.element == annotationClass) {
-          return true;
+    return compiler.withCurrentElement(element, () {
+      for (MetadataAnnotation metadata in element.metadata) {
+        assert(invariant(metadata, metadata.constant != null,
+            message: "Unevaluated metadata constant."));
+        ConstantValue value =
+            compiler.constants.getConstantValue(metadata.constant);
+        if (value.isConstructedObject) {
+          ConstructedConstantValue constructedConstant = value;
+          if (constructedConstant.type.element == annotationClass) {
+            return true;
+          }
         }
       }
-    }
-    return false;
+      return false;
+    });
   }
 }
 
@@ -2941,6 +2994,7 @@ class JavaScriptResolutionCallbacks extends ResolutionCallbacks {
     registerBackendInstantiation(backend.compiler.listClass, registry);
     registerBackendStaticInvocation(backend.getRuntimeTypeToString(), registry);
     registerBackendStaticInvocation(backend.getCreateRuntimeType(), registry);
+    needsInt(registry, 'Needed for accessing a type variable literal on this.');
   }
 
   // TODO(johnniwinther): Maybe split this into [onAssertType] and [onTestType].
@@ -3001,7 +3055,7 @@ class JavaScriptResolutionCallbacks extends ResolutionCallbacks {
     registerBackendStaticInvocation(
         backend.getThrowAbstractClassInstantiationError(), registry);
     // Also register the types of the arguments passed to this method.
-    registerBackendInstantiation(backend.compiler.stringClass, registry);
+    needsString(registry, '// Needed to encode the message.');
   }
 
   void onFallThroughError(Registry registry) {
@@ -3018,8 +3072,10 @@ class JavaScriptResolutionCallbacks extends ResolutionCallbacks {
     assert(registry.isForResolution);
     registerBackendStaticInvocation(backend.getThrowNoSuchMethod(), registry);
     // Also register the types of the arguments passed to this method.
-    registerBackendInstantiation(backend.compiler.listClass, registry);
-    registerBackendInstantiation(backend.compiler.stringClass, registry);
+    needsList(registry,
+        'Needed to encode the arguments for throw NoSuchMethodError.');
+    needsString(registry,
+        'Needed to encode the name for throw NoSuchMethodError.');
   }
 
   void onThrowRuntimeError(Registry registry) {
@@ -3029,15 +3085,27 @@ class JavaScriptResolutionCallbacks extends ResolutionCallbacks {
     registerBackendInstantiation(backend.compiler.stringClass, registry);
   }
 
+  void onCompileTimeError(Registry registry, ErroneousElement error) {
+    if (backend.compiler.generateCodeWithCompileTimeErrors) {
+      // TODO(johnniwinther): This should have its own uncatchable error.
+      onThrowRuntimeError(registry);
+    }
+  }
+
   void onSuperNoSuchMethod(Registry registry) {
     assert(registry.isForResolution);
     registerBackendStaticInvocation(
         backend.getCreateInvocationMirror(), registry);
     registerBackendStaticInvocation(
-        backend.compiler.objectClass.lookupLocalMember(Compiler.NO_SUCH_METHOD),
+        backend.compiler.objectClass.lookupLocalMember(
+            Identifiers.noSuchMethod_),
         registry);
-    registerBackendInstantiation(backend.compiler.listClass, registry);
-    registerBackendInstantiation(backend.compiler.stringClass, registry);
+    needsInt(registry,
+        'Needed to encode the invocation kind of super.noSuchMethod.');
+    needsList(registry,
+        'Needed to encode the arguments of super.noSuchMethod.');
+    needsString(registry,
+        'Needed to encode the name of super.noSuchMethod.');
   }
 
   void onMapLiteral(ResolutionRegistry registry,
@@ -3066,6 +3134,29 @@ class JavaScriptResolutionCallbacks extends ResolutionCallbacks {
     assert(backend.compiler.symbolValidatedConstructor != null);
     registerBackendStaticInvocation(
         backend.compiler.symbolValidatedConstructor, registry);
+  }
+
+  /// Called when resolving a prefix or postfix expression.
+  void onIncDecOperation(Registry registry) {
+    needsInt(registry, 'Needed for the `+ 1` or `- 1` operation of ++/--.');
+  }
+
+  /// Helper for registering that `int` is needed.
+  void needsInt(Registry registry, String reason) {
+    // TODO(johnniwinther): Register [reason] for use in dump-info.
+    registerBackendInstantiation(backend.compiler.intClass, registry);
+  }
+
+  /// Helper for registering that `List` is needed.
+  void needsList(Registry registry, String reason) {
+    // TODO(johnniwinther): Register [reason] for use in dump-info.
+    registerBackendInstantiation(backend.compiler.listClass, registry);
+  }
+
+  /// Helper for registering that `String` is needed.
+  void needsString(Registry registry, String reason) {
+    // TODO(johnniwinther): Register [reason] for use in dump-info.
+    registerBackendInstantiation(backend.compiler.stringClass, registry);
   }
 }
 

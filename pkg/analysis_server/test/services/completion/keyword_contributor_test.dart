@@ -79,6 +79,28 @@ class KeywordContributorTest extends AbstractCompletionTest {
 
   static const List<Keyword> STMT_START_IN_CLASS = const [
     Keyword.ASSERT,
+    Keyword.CONST,
+    Keyword.DO,
+    Keyword.FINAL,
+    Keyword.FOR,
+    Keyword.IF,
+    Keyword.NEW,
+    Keyword.RETHROW,
+    Keyword.RETURN,
+    Keyword.SUPER,
+    Keyword.SWITCH,
+    Keyword.THIS,
+    Keyword.THROW,
+    Keyword.TRY,
+    Keyword.VAR,
+    Keyword.VOID,
+    Keyword.WHILE
+  ];
+
+  static const List<Keyword> STMT_START_IN_LOOP_IN_CLASS = const [
+    Keyword.ASSERT,
+    Keyword.BREAK,
+    Keyword.CONST,
     Keyword.CONTINUE,
     Keyword.DO,
     Keyword.FINAL,
@@ -99,8 +121,9 @@ class KeywordContributorTest extends AbstractCompletionTest {
 
   static const List<Keyword> STMT_START_IN_SWITCH_IN_CLASS = const [
     Keyword.ASSERT,
+    Keyword.BREAK,
     Keyword.CASE,
-    Keyword.CONTINUE,
+    Keyword.CONST,
     Keyword.DEFAULT,
     Keyword.DO,
     Keyword.FINAL,
@@ -121,8 +144,9 @@ class KeywordContributorTest extends AbstractCompletionTest {
 
   static const List<Keyword> STMT_START_IN_SWITCH_OUTSIDE_CLASS = const [
     Keyword.ASSERT,
+    Keyword.BREAK,
     Keyword.CASE,
-    Keyword.CONTINUE,
+    Keyword.CONST,
     Keyword.DEFAULT,
     Keyword.DO,
     Keyword.FINAL,
@@ -141,6 +165,26 @@ class KeywordContributorTest extends AbstractCompletionTest {
 
   static const List<Keyword> STMT_START_OUTSIDE_CLASS = const [
     Keyword.ASSERT,
+    Keyword.CONST,
+    Keyword.DO,
+    Keyword.FINAL,
+    Keyword.FOR,
+    Keyword.IF,
+    Keyword.NEW,
+    Keyword.RETHROW,
+    Keyword.RETURN,
+    Keyword.SWITCH,
+    Keyword.THROW,
+    Keyword.TRY,
+    Keyword.VAR,
+    Keyword.VOID,
+    Keyword.WHILE
+  ];
+
+  static const List<Keyword> STMT_START_IN_LOOP_OUTSIDE_CLASS = const [
+    Keyword.ASSERT,
+    Keyword.BREAK,
+    Keyword.CONST,
     Keyword.CONTINUE,
     Keyword.DO,
     Keyword.FINAL,
@@ -158,6 +202,7 @@ class KeywordContributorTest extends AbstractCompletionTest {
   ];
 
   static const List<Keyword> EXPRESSION_START_INSTANCE = const [
+    Keyword.CONST,
     Keyword.FALSE,
     Keyword.NEW,
     Keyword.NULL,
@@ -167,6 +212,7 @@ class KeywordContributorTest extends AbstractCompletionTest {
   ];
 
   static const List<Keyword> EXPRESSION_START_NO_INSTANCE = const [
+    Keyword.CONST,
     Keyword.FALSE,
     Keyword.NEW,
     Keyword.NULL,
@@ -227,6 +273,35 @@ class KeywordContributorTest extends AbstractCompletionTest {
         expect(s.isPotential, equals(false));
       }
     }
+  }
+
+  fail_import_partial() {
+    addTestSource('imp^ import "package:foo/foo.dart"; import "bar.dart";');
+    expect(computeFast(), isTrue);
+    // TODO(danrubel) should not suggest declaration keywords
+    assertNotSuggested('class');
+  }
+
+  fail_import_partial4() {
+    addTestSource('^ imp import "package:foo/foo.dart";');
+    expect(computeFast(), isTrue);
+    // TODO(danrubel) should not suggest declaration keywords
+    assertNotSuggested('class');
+  }
+
+  fail_import_partial5() {
+    addTestSource('library libA; imp^ import "package:foo/foo.dart";');
+    expect(computeFast(), isTrue);
+    // TODO(danrubel) should not suggest declaration keywords
+    assertNotSuggested('class');
+  }
+
+  fail_import_partial6() {
+    addTestSource(
+        'library bar; import "zoo.dart"; imp^ import "package:foo/foo.dart";');
+    expect(computeFast(), isTrue);
+    // TODO(danrubel) should not suggest declaration keywords
+    assertNotSuggested('class');
   }
 
   @override
@@ -510,11 +585,39 @@ class KeywordContributorTest extends AbstractCompletionTest {
     assertSuggestKeywords([Keyword.THIS]);
   }
 
+  test_do_break_continue() {
+    addTestSource('main() {do {^} while (true);}');
+    expect(computeFast(), isTrue);
+    assertSuggestKeywords(STMT_START_IN_LOOP_OUTSIDE_CLASS,
+        relevance: DART_RELEVANCE_KEYWORD);
+  }
+
+  test_do_break_continue2() {
+    addTestSource('class A {foo() {do {^} while (true);}}');
+    expect(computeFast(), isTrue);
+    assertSuggestKeywords(STMT_START_IN_LOOP_IN_CLASS,
+        relevance: DART_RELEVANCE_KEYWORD);
+  }
+
   test_empty() {
     addTestSource('^');
     expect(computeFast(), isTrue);
     assertSuggestKeywords(DIRECTIVE_DECLARATION_AND_LIBRARY_KEYWORDS,
         relevance: DART_RELEVANCE_HIGH);
+  }
+
+  test_for_break_continue() {
+    addTestSource('main() {for (int x in myList) {^}}');
+    expect(computeFast(), isTrue);
+    assertSuggestKeywords(STMT_START_IN_LOOP_OUTSIDE_CLASS,
+        relevance: DART_RELEVANCE_KEYWORD);
+  }
+
+  test_for_break_continue2() {
+    addTestSource('class A {foo() {for (int x in myList) {^}}}');
+    expect(computeFast(), isTrue);
+    assertSuggestKeywords(STMT_START_IN_LOOP_IN_CLASS,
+        relevance: DART_RELEVANCE_KEYWORD);
   }
 
   test_for_expression_in() {
@@ -532,15 +635,13 @@ class KeywordContributorTest extends AbstractCompletionTest {
   test_for_expression_init() {
     addTestSource('main() {for (int x = i^)}');
     expect(computeFast(), isTrue);
-    assertSuggestKeywords(
-        [Keyword.FALSE, Keyword.NEW, Keyword.NULL, Keyword.TRUE]);
+    assertSuggestKeywords(EXPRESSION_START_NO_INSTANCE);
   }
 
   test_for_expression_init2() {
     addTestSource('main() {for (int x = in^)}');
     expect(computeFast(), isTrue);
-    assertSuggestKeywords(
-        [Keyword.FALSE, Keyword.NEW, Keyword.NULL, Keyword.TRUE]);
+    assertSuggestKeywords(EXPRESSION_START_NO_INSTANCE);
   }
 
   test_function_async() {
@@ -841,6 +942,14 @@ class A {
         relevance: DART_RELEVANCE_HIGH);
   }
 
+  test_import_deferred_as5() {
+    addTestSource('import "foo" sh^ import "bar"; import "baz";');
+    expect(computeFast(), isTrue);
+    assertSuggestKeywords([Keyword.AS],
+        pseudoKeywords: ['deferred as', 'show', 'hide'],
+        relevance: DART_RELEVANCE_HIGH);
+  }
+
   test_import_deferred_not() {
     addTestSource('import "foo" as foo ^;');
     expect(computeFast(), isTrue);
@@ -848,11 +957,85 @@ class A {
         pseudoKeywords: ['show', 'hide'], relevance: DART_RELEVANCE_HIGH);
   }
 
+  test_import_deferred_partial() {
+    addTestSource('import "package:foo/foo.dart" def^ as foo;');
+    expect(computeFast(), isTrue);
+    assertSuggestKeywords([Keyword.DEFERRED], relevance: DART_RELEVANCE_HIGH);
+    expect(request.replacementOffset, 30);
+    expect(request.replacementLength, 3);
+  }
+
   test_import_incomplete() {
     addTestSource('import "^"');
     expect(computeFast(), isTrue);
     assertNoSuggestions();
-    assertSuggestKeywords([]);
+  }
+
+  test_import_partial() {
+    addTestSource('imp^ import "package:foo/foo.dart"; import "bar.dart";');
+    expect(computeFast(), isTrue);
+    // TODO(danrubel) should not suggest declaration keywords
+    assertSuggestKeywords(DIRECTIVE_DECLARATION_AND_LIBRARY_KEYWORDS,
+        relevance: DART_RELEVANCE_HIGH);
+    expect(request.replacementOffset, 0);
+    expect(request.replacementLength, 3);
+  }
+
+  test_import_partial2() {
+    addTestSource('^imp import "package:foo/foo.dart";');
+    expect(computeFast(), isTrue);
+    // TODO(danrubel) should not suggest declaration keywords
+    assertSuggestKeywords(DIRECTIVE_DECLARATION_AND_LIBRARY_KEYWORDS,
+        relevance: DART_RELEVANCE_HIGH);
+    expect(request.replacementOffset, 0);
+    expect(request.replacementLength, 3);
+  }
+
+  test_import_partial3() {
+    addTestSource(' ^imp import "package:foo/foo.dart"; import "bar.dart";');
+    expect(computeFast(), isTrue);
+    // TODO(danrubel) should not suggest declaration keywords
+    assertSuggestKeywords(DIRECTIVE_DECLARATION_AND_LIBRARY_KEYWORDS,
+        relevance: DART_RELEVANCE_HIGH);
+    expect(request.replacementOffset, 1);
+    expect(request.replacementLength, 3);
+  }
+
+  test_import_partial4() {
+    addTestSource('^ imp import "package:foo/foo.dart";');
+    expect(computeFast(), isTrue);
+    // TODO(danrubel) should not suggest declaration keywords
+    assertSuggestKeywords(DIRECTIVE_DECLARATION_AND_LIBRARY_KEYWORDS,
+        relevance: DART_RELEVANCE_HIGH);
+    expect(request.replacementOffset, 0);
+    expect(request.replacementLength, 0);
+  }
+
+  test_import_partial5() {
+    addTestSource('library libA; imp^ import "package:foo/foo.dart";');
+    expect(computeFast(), isTrue);
+    // TODO(danrubel) should not suggest declaration keywords
+    assertSuggestKeywords(DIRECTIVE_AND_DECLARATION_KEYWORDS,
+        relevance: DART_RELEVANCE_HIGH);
+    expect(request.replacementOffset, 14);
+    expect(request.replacementLength, 3);
+  }
+
+  test_import_partial6() {
+    addTestSource(
+        'library bar; import "zoo.dart"; imp^ import "package:foo/foo.dart";');
+    expect(computeFast(), isTrue);
+    // TODO(danrubel) should not suggest declaration keywords
+    assertSuggestKeywords(DIRECTIVE_AND_DECLARATION_KEYWORDS,
+        relevance: DART_RELEVANCE_HIGH);
+    expect(request.replacementOffset, 32);
+    expect(request.replacementLength, 3);
+  }
+
+  test_is_expression() {
+    addTestSource('main() {if (x is^)}');
+    expect(computeFast(), isTrue);
+    assertSuggestKeywords([Keyword.IS], relevance: DART_RELEVANCE_HIGH);
   }
 
   test_library() {
@@ -1184,6 +1367,20 @@ class A {
     addTestSource('class A{foo() {switch(1) {case 1:^}}}');
     expect(computeFast(), isTrue);
     assertSuggestKeywords(STMT_START_IN_SWITCH_IN_CLASS);
+  }
+
+  test_while_break_continue() {
+    addTestSource('main() {while (true) {^}}');
+    expect(computeFast(), isTrue);
+    assertSuggestKeywords(STMT_START_IN_LOOP_OUTSIDE_CLASS,
+        relevance: DART_RELEVANCE_KEYWORD);
+  }
+
+  test_while_break_continue2() {
+    addTestSource('class A {foo() {while (true) {^}}}');
+    expect(computeFast(), isTrue);
+    assertSuggestKeywords(STMT_START_IN_LOOP_IN_CLASS,
+        relevance: DART_RELEVANCE_KEYWORD);
   }
 
   void _appendCompletions(

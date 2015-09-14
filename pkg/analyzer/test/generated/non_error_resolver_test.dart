@@ -10,6 +10,7 @@ import 'package:analyzer/src/generated/engine.dart';
 import 'package:analyzer/src/generated/error.dart';
 import 'package:analyzer/src/generated/parser.dart' show ParserErrorCode;
 import 'package:analyzer/src/generated/source_io.dart';
+import 'package:unittest/unittest.dart';
 
 import '../reflective_tests.dart';
 import '../utils.dart';
@@ -830,6 +831,43 @@ abstract class A {
     }
   }
 
+  void test_commentReference_beforeEnum() {
+    String code = r'''
+/// This is the [Samurai] kind.
+enum Samurai {
+  /// Use [int].
+  WITH_SWORD,
+  /// Like [WITH_SWORD], but only without one.
+  WITHOUT_SWORD
+}''';
+    Source source = addSource(code);
+    computeLibrarySourceErrors(source);
+    assertNoErrors(source);
+    verify([source]);
+    CompilationUnit unit = _getResolvedLibraryUnit(source);
+    {
+      SimpleIdentifier ref = EngineTestCase.findNode(
+          unit, code, "Samurai]", (node) => node is SimpleIdentifier);
+      ClassElement refElement = ref.staticElement;
+      expect(refElement, isNotNull);
+      expect(refElement.name, 'Samurai');
+    }
+    {
+      SimpleIdentifier ref = EngineTestCase.findNode(
+          unit, code, "int]", (node) => node is SimpleIdentifier);
+      ClassElement refElement = ref.staticElement;
+      expect(refElement, isNotNull);
+      expect(refElement.name, 'int');
+    }
+    {
+      SimpleIdentifier ref = EngineTestCase.findNode(
+          unit, code, "WITH_SWORD]", (node) => node is SimpleIdentifier);
+      PropertyAccessorElement refElement = ref.staticElement;
+      expect(refElement, isNotNull);
+      expect(refElement.name, 'WITH_SWORD');
+    }
+  }
+
   void test_commentReference_beforeFunction_blockBody() {
     String code = r'''
 /// [p]
@@ -1450,6 +1488,18 @@ main() {
     verify([source]);
   }
 
+  void test_exportDuplicatedLibraryUnnamed() {
+    Source source = addSource(r'''
+library test;
+export 'lib1.dart';
+export 'lib2.dart';''');
+    addNamedSource("/lib1.dart", "");
+    addNamedSource("/lib2.dart", "");
+    computeLibrarySourceErrors(source);
+    assertNoErrors(source);
+    verify([source]);
+  }
+
   void test_exportOfNonLibrary_libraryDeclared() {
     Source source = addSource(r'''
 library L;
@@ -1964,6 +2014,22 @@ import 'lib.dart';''');
       HintCode.UNUSED_IMPORT,
       HintCode.UNUSED_IMPORT,
       HintCode.DUPLICATE_IMPORT
+    ]);
+    verify([source]);
+  }
+
+  void test_importDuplicatedLibraryUnnamed() {
+    Source source = addSource(r'''
+library test;
+import 'lib1.dart';
+import 'lib2.dart';''');
+    addNamedSource("/lib1.dart", "");
+    addNamedSource("/lib2.dart", "");
+    computeLibrarySourceErrors(source);
+    assertErrors(source, [
+      // No warning on duplicate import (https://github.com/dart-lang/sdk/issues/24156)
+      HintCode.UNUSED_IMPORT,
+      HintCode.UNUSED_IMPORT
     ]);
     verify([source]);
   }
@@ -2955,6 +3021,22 @@ main() {
   Functor f = new Functor();
   f();
 }''');
+    computeLibrarySourceErrors(source);
+    assertNoErrors(source);
+    verify([source]);
+  }
+
+  void test_issue_24191() {
+    Source source = addSource('''
+import 'dart:async';
+
+class S extends Stream {}
+f(S s) async {
+  await for (var v in s) {
+    print(v);
+  }
+}
+''');
     computeLibrarySourceErrors(source);
     assertNoErrors(source);
     verify([source]);

@@ -1198,37 +1198,14 @@ class Assembler : public ValueObject {
     LslImmediate(dst, src, kSmiTagSize);
   }
 
-  // Branching to ExternalLabels.
-  void Branch(const ExternalLabel* label) {
-    LoadExternalLabel(TMP, label);
-    br(TMP);
-  }
-
   void Branch(const StubEntry& stub_entry);
-
-  // Fixed length branch to label.
-  void BranchPatchable(const ExternalLabel* label) {
-    // TODO(zra): Use LoadExternalLabelFixed if possible.
-    LoadImmediateFixed(TMP, label->address());
-    br(TMP);
-  }
-
   void BranchPatchable(const StubEntry& stub_entry);
 
-  void BranchLink(const ExternalLabel* label) {
-    LoadExternalLabel(TMP, label);
-    blr(TMP);
-  }
-
+  void BranchLink(const ExternalLabel* label);
   void BranchLink(const StubEntry& stub_entry);
 
   // BranchLinkPatchable must be a fixed-length sequence so we can patch it
   // with the debugger.
-  void BranchLinkPatchable(const ExternalLabel* label) {
-    LoadExternalLabelFixed(TMP, label, kPatchable);
-    blr(TMP);
-  }
-
   void BranchLinkPatchable(const StubEntry& stub_entry);
 
   // Macros accepting a pp Register argument may attempt to load values from
@@ -1311,6 +1288,7 @@ class Assembler : public ValueObject {
   intptr_t FindImmediate(int64_t imm);
   bool CanLoadFromObjectPool(const Object& object) const;
   void LoadExternalLabel(Register dst, const ExternalLabel* label);
+  void LoadNativeEntry(Register dst, const ExternalLabel* label);
   void LoadExternalLabelFixed(Register dst,
                               const ExternalLabel* label,
                               Patchability patchable);
@@ -1448,6 +1426,10 @@ class Assembler : public ValueObject {
 
   bool constant_pool_allowed_;
 
+  void Branch(const ExternalLabel* label);
+  void BranchPatchable(const ExternalLabel* label);
+  void BranchLinkPatchable(const ExternalLabel* label);
+
   void LoadObjectHelper(Register dst, const Object& obj, bool is_unique);
 
   void AddSubHelper(OperandSize os, bool set_flags, bool subtract,
@@ -1552,7 +1534,7 @@ class Assembler : public ValueObject {
   int32_t EncodeImm19BranchOffset(int64_t imm, int32_t instr) {
     if (!CanEncodeImm19BranchOffset(imm)) {
       ASSERT(!use_far_branches());
-      Isolate::Current()->long_jump_base()->Jump(
+      Thread::Current()->long_jump_base()->Jump(
           1, Object::branch_offset_error());
     }
     const int32_t imm32 = static_cast<int32_t>(imm);

@@ -7,6 +7,8 @@ library dart2js.enqueue;
 import 'dart:collection' show
     Queue;
 
+import 'common/names.dart' show
+    Identifiers;
 import 'common/work.dart' show
     ItemCompilationContext,
     WorkItem;
@@ -42,14 +44,17 @@ import 'elements/elements.dart' show
     Member,
     MemberElement,
     MethodElement,
+    Name,
     TypedElement,
     TypedefElement;
 import 'js/js.dart' as js;
 import 'native/native.dart' as native;
-import 'resolution/resolution.dart' show
+import 'resolution/members.dart' show
     ResolverVisitor;
 import 'tree/tree.dart' show
     Send;
+import 'types/types.dart' show
+    TypeMaskStrategy;
 import 'universe/universe.dart';
 import 'util/util.dart' show
     Link,
@@ -65,9 +70,12 @@ class EnqueueTask extends CompilerTask {
 
   EnqueueTask(Compiler compiler)
     : resolution = new ResolutionEnqueuer(
-          compiler, compiler.backend.createItemCompilationContext),
+          compiler, compiler.backend.createItemCompilationContext,
+          compiler.analyzeOnly && compiler.analyzeMain
+              ? const EnqueuerStrategy() : const TreeShakingEnqueuerStrategy()),
       codegen = new CodegenEnqueuer(
-          compiler, compiler.backend.createItemCompilationContext),
+          compiler, compiler.backend.createItemCompilationContext,
+          const TreeShakingEnqueuerStrategy()),
       super(compiler) {
     codegen.task = this;
     resolution.task = this;
@@ -108,6 +116,7 @@ class WorldImpact {
 abstract class Enqueuer {
   final String name;
   final Compiler compiler; // TODO(ahe): Remove this dependency.
+  final EnqueuerStrategy strategy;
   final ItemCompilationContextCreator itemCompilationContextCreator;
   final Map<String, Set<Element>> instanceMembersByName
       = new Map<String, Set<Element>>();
@@ -115,7 +124,7 @@ abstract class Enqueuer {
       = new Map<String, Set<Element>>();
   final Set<ClassElement> _processedClasses = new Set<ClassElement>();
   Set<ClassElement> recentClasses = new Setlet<ClassElement>();
-  final Universe universe = new Universe();
+  final Universe universe = new Universe(const TypeMaskStrategy());
 
   static final TRACE_MIRROR_ENQUEUING =
       const bool.fromEnvironment("TRACE_MIRROR_ENQUEUING");
@@ -127,7 +136,10 @@ abstract class Enqueuer {
   bool hasEnqueuedReflectiveElements = false;
   bool hasEnqueuedReflectiveStaticFields = false;
 
-  Enqueuer(this.name, this.compiler, this.itemCompilationContextCreator);
+  Enqueuer(this.name,
+           this.compiler,
+           this.itemCompilationContextCreator,
+           this.strategy);
 
   Queue<WorkItem> get queue;
   bool get queueIsEmpty => queue.isEmpty;
@@ -193,7 +205,7 @@ abstract class Enqueuer {
   }
 
   void processInstantiatedClassMembers(ClassElement cls) {
-    cls.implementation.forEachMember(processInstantiatedClassMember);
+    strategy.processInstantiatedClass(this, cls);
   }
 
   void processInstantiatedClassMember(ClassElement cls, Element member) {
@@ -246,10 +258,10 @@ abstract class Enqueuer {
     } else if (member.isFunction) {
       FunctionElement function = member;
       function.computeType(compiler);
-      if (function.name == Compiler.NO_SUCH_METHOD) {
+      if (function.name == Identifiers.noSuchMethod_) {
         registerNoSuchMethod(function);
       }
-      if (function.name == Compiler.CALL_OPERATOR_NAME &&
+      if (function.name == Identifiers.call &&
           !cls.typeVariables.isEmpty) {
         registerCallMethodWithFreeTypeVariables(
             function, compiler.globalDependencies);
@@ -411,7 +423,8 @@ abstract class Enqueuer {
         registerSelectorUse(selector);
         if (element.isField) {
           UniverseSelector selector = new UniverseSelector(
-              new Selector.setter(element.name, element.library), null);
+              new Selector.setter(new Name(
+                  element.name, element.library, isSetter: true)), null);
           registerInvokedSetter(selector);
         }
       }
@@ -552,6 +565,10 @@ abstract class Enqueuer {
   }
 
   void handleUnseenSelector(UniverseSelector universeSelector) {
+    strategy.processSelector(this, universeSelector);
+  }
+
+  void handleUnseenSelectorInternal(UniverseSelector universeSelector) {
     Selector selector = universeSelector.selector;
     String methodName = selector.name;
     processInstanceMembers(methodName, (Element member) {
@@ -600,6 +617,10 @@ abstract class Enqueuer {
    */
   void registerStaticUse(Element element) {
     if (element == null) return;
+    strategy.processStaticUse(this, element);
+  }
+
+  void registerStaticUseInternal(Element element) {
     assert(invariant(element, element.isDeclaration,
         message: "Element ${element} is not the declaration."));
     if (Elements.isStaticOrTopLevel(element) && element.isField) {
@@ -745,8 +766,12 @@ class ResolutionEnqueuer extends Enqueuer {
   final Queue<DeferredTask> deferredTaskQueue;
 
   ResolutionEnqueuer(Compiler compiler,
-                     ItemCompilationContext itemCompilationContextCreator())
-      : super('resolution enqueuer', compiler, itemCompilationContextCreator),
+                     ItemCompilationContext itemCompilationContextCreator(),
+                     EnqueuerStrategy strategy)
+      : super('resolution enqueuer',
+              compiler,
+              itemCompilationContextCreator,
+              strategy),
         resolvedElements = new Set<AstElement>(),
         queue = new Queue<ResolutionWorkItem>(),
         deferredTaskQueue = new Queue<DeferredTask>();
@@ -820,7 +845,7 @@ class ResolutionEnqueuer extends Enqueuer {
       }
     }
 
-    if (element.isGetter && element.name == Compiler.RUNTIME_TYPE) {
+    if (element.isGetter && element.name == Identifiers.runtimeType_) {
       // Enable runtime type support if we discover a getter called runtimeType.
       // We have to enable runtime type before hitting the codegen, so
       // that constructors know whether they need to generate code for
@@ -909,11 +934,13 @@ class CodegenEnqueuer extends Enqueuer {
   bool enabledNoSuchMethod = false;
 
   CodegenEnqueuer(Compiler compiler,
-                  ItemCompilationContext itemCompilationContextCreator())
+                  ItemCompilationContext itemCompilationContextCreator(),
+                  EnqueuerStrategy strategy)
       : queue = new Queue<CodegenWorkItem>(),
         newlyEnqueuedElements = compiler.cacheStrategy.newSet(),
         newlySeenSelectors = compiler.cacheStrategy.newSet(),
-        super('codegen enqueuer', compiler, itemCompilationContextCreator);
+        super('codegen enqueuer', compiler, itemCompilationContextCreator,
+              strategy);
 
   bool isProcessed(Element member) =>
       member.isAbstract || generatedCode.containsKey(member);
@@ -1014,4 +1041,38 @@ void removeFromSet(Map<String, Set<Element>> map, Element element) {
   Set<Element> set = map[element.name];
   if (set == null) return;
   set.remove(element);
+}
+
+/// Strategy used by the enqueuer to populate the world.
+// TODO(johnniwinther): Merge this interface with [QueueFilter].
+class EnqueuerStrategy {
+  const EnqueuerStrategy();
+
+  /// Process a class instantiated in live code.
+  void processInstantiatedClass(Enqueuer enqueuer, ClassElement cls) {}
+
+  /// Process an element statically accessed in live code.
+  void processStaticUse(Enqueuer enqueuer, Element element) {}
+
+  /// Process a selector for a call site in live code.
+  void processSelector(Enqueuer enqueuer, UniverseSelector selector) {}
+}
+
+class TreeShakingEnqueuerStrategy implements EnqueuerStrategy {
+  const TreeShakingEnqueuerStrategy();
+
+  @override
+  void processInstantiatedClass(Enqueuer enqueuer, ClassElement cls) {
+    cls.implementation.forEachMember(enqueuer.processInstantiatedClassMember);
+  }
+
+  @override
+  void processStaticUse(Enqueuer enqueuer, Element element) {
+    enqueuer.registerStaticUseInternal(element);
+  }
+
+  @override
+  void processSelector(Enqueuer enqueuer, UniverseSelector selector) {
+    enqueuer.handleUnseenSelectorInternal(selector);
+  }
 }

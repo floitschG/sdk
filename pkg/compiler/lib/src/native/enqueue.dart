@@ -263,7 +263,7 @@ abstract class NativeEnqueuerBase implements NativeEnqueuer {
       if (token.stringValue != 'extends') return null;
       token = token.next;
       Token id = token;
-      while (token.kind != EOF_TOKEN) {
+      while (token.kind != Tokens.EOF_TOKEN) {
         token = token.next;
         if (token.stringValue != '.') break;
         token = token.next;
@@ -314,10 +314,8 @@ abstract class NativeEnqueuerBase implements NativeEnqueuer {
   String findJsNameFromAnnotation(Element element) {
     String name = null;
     ClassElement annotationClass = annotationJsNameClass;
-    for (Link<MetadataAnnotation> link = element.metadata;
-         !link.isEmpty;
-         link = link.tail) {
-      MetadataAnnotation annotation = link.head.ensureResolved(compiler);
+    for (MetadataAnnotation annotation in element.implementation.metadata) {
+      annotation.ensureResolved(compiler);
       ConstantValue value =
           compiler.constants.getConstantValue(annotation.constant);
       if (!value.isConstructedObject) continue;

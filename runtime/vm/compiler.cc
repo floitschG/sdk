@@ -187,20 +187,21 @@ DEFINE_RUNTIME_ENTRY(CompileFunction, 1) {
 RawError* Compiler::Compile(const Library& library, const Script& script) {
   LongJumpScope jump;
   if (setjmp(*jump.Set()) == 0) {
-    Isolate* const isolate = Isolate::Current();
-    StackZone zone(isolate);
+    Thread* const thread = Thread::Current();
+    StackZone zone(thread);
     if (FLAG_trace_compiler) {
       const String& script_url = String::Handle(script.url());
       // TODO(iposva): Extract script kind.
-      ISL_Print("Compiling %s '%s'\n", "", script_url.ToCString());
+      THR_Print("Compiling %s '%s'\n", "", script_url.ToCString());
     }
     const String& library_key = String::Handle(library.private_key());
     script.Tokenize(library_key);
     Parser::ParseCompilationUnit(library, script);
     return Error::null();
   } else {
-    Isolate* const isolate = Isolate::Current();
-    StackZone zone(isolate);
+    Thread* const thread = Thread::Current();
+    Isolate* const isolate = thread->isolate();
+    StackZone zone(thread);
     Error& error = Error::Handle();
     error = isolate->object_store()->sticky_error();
     isolate->object_store()->clear_sticky_error();
@@ -211,9 +212,10 @@ RawError* Compiler::Compile(const Library& library, const Script& script) {
 }
 
 
-static void AddRelatedClassesToList(const Class& cls,
-                                    const GrowableObjectArray& parse_list,
-                                    const GrowableObjectArray& patch_list) {
+static void AddRelatedClassesToList(
+    const Class& cls,
+    GrowableHandlePtrArray<const Class>* parse_list,
+    GrowableHandlePtrArray<const Class>* patch_list) {
   Isolate* isolate = Isolate::Current();
   Class& parse_class = Class::Handle(isolate);
   AbstractType& interface_type = Type::Handle(isolate);
@@ -227,7 +229,7 @@ static void AddRelatedClassesToList(const Class& cls,
     interface_type ^= interfaces.At(i);
     parse_class ^= interface_type.type_class();
     if (!parse_class.is_finalized() && !parse_class.is_marked_for_parsing()) {
-      parse_list.Add(parse_class);
+      parse_list->Add(parse_class);
       parse_class.set_is_marked_for_parsing();
     }
   }
@@ -238,7 +240,7 @@ static void AddRelatedClassesToList(const Class& cls,
   parse_class ^= cls.SuperClass();
   while (!parse_class.IsNull()) {
     if (!parse_class.is_finalized() && !parse_class.is_marked_for_parsing()) {
-      parse_list.Add(parse_class);
+      parse_list->Add(parse_class);
       parse_class.set_is_marked_for_parsing();
     }
     parse_class ^= parse_class.SuperClass();
@@ -250,7 +252,7 @@ static void AddRelatedClassesToList(const Class& cls,
   parse_class ^= cls.patch_class();
   if (!parse_class.IsNull()) {
     if (!parse_class.is_finalized() && !parse_class.is_marked_for_parsing()) {
-      patch_list.Add(parse_class);
+      patch_list->Add(parse_class);
       parse_class.set_is_marked_for_parsing();
     }
   }
@@ -290,22 +292,19 @@ RawError* Compiler::CompileClass(const Class& cls) {
 
   Thread* const thread = Thread::Current();
   Isolate* const isolate = thread->isolate();
+  StackZone zone(thread);
   // We remember all the classes that are being compiled in these lists. This
   // also allows us to reset the marked_for_parsing state in case we see an
   // error.
   VMTagScope tagScope(thread, VMTag::kCompileClassTagId);
-  Class& parse_class = Class::Handle(isolate);
-  const GrowableObjectArray& parse_list =
-      GrowableObjectArray::Handle(isolate, GrowableObjectArray::New(4));
-  const GrowableObjectArray& patch_list =
-      GrowableObjectArray::Handle(isolate, GrowableObjectArray::New(4));
+  GrowableHandlePtrArray<const Class> parse_list(thread->zone(), 4);
+  GrowableHandlePtrArray<const Class> patch_list(thread->zone(), 4);
 
   // Parse the class and all the interfaces it implements and super classes.
   LongJumpScope jump;
   if (setjmp(*jump.Set()) == 0) {
-    StackZone zone(thread);
     if (FLAG_trace_compiler) {
-      ISL_Print("Compiling Class %s '%s'\n", "", cls.ToCString());
+      THR_Print("Compiling Class %s '%s'\n", "", cls.ToCString());
     }
 
     // Add the primary class which needs to be parsed to the parse list.
@@ -320,34 +319,33 @@ RawError* Compiler::CompileClass(const Class& cls) {
     // to it by AddRelatedClassesToList. It is not OK to hoist
     // parse_list.Length() into a local variable and iterate using the local
     // variable.
-    for (intptr_t i = 0; i < parse_list.Length(); i++) {
-      parse_class ^= parse_list.At(i);
-      AddRelatedClassesToList(parse_class, parse_list, patch_list);
+    for (intptr_t i = 0; i < parse_list.length(); i++) {
+      AddRelatedClassesToList(parse_list.At(i), &parse_list, &patch_list);
     }
 
     // Parse all the classes that have been added above.
-    for (intptr_t i = (parse_list.Length() - 1); i >=0 ; i--) {
-      parse_class ^= parse_list.At(i);
+    for (intptr_t i = (parse_list.length() - 1); i >=0 ; i--) {
+      const Class& parse_class = parse_list.At(i);
       ASSERT(!parse_class.IsNull());
       Parser::ParseClass(parse_class);
     }
 
     // Parse all the patch classes that have been added above.
-    for (intptr_t i = 0; i < patch_list.Length(); i++) {
-      parse_class ^= patch_list.At(i);
+    for (intptr_t i = 0; i < patch_list.length(); i++) {
+      const Class& parse_class = patch_list.At(i);
       ASSERT(!parse_class.IsNull());
       Parser::ParseClass(parse_class);
     }
 
     // Finalize these classes.
-    for (intptr_t i = (parse_list.Length() - 1); i >=0 ; i--) {
-      parse_class ^= parse_list.At(i);
+    for (intptr_t i = (parse_list.length() - 1); i >=0 ; i--) {
+      const Class& parse_class = parse_list.At(i);
       ASSERT(!parse_class.IsNull());
       ClassFinalizer::FinalizeClass(parse_class);
       parse_class.reset_is_marked_for_parsing();
     }
-    for (intptr_t i = (patch_list.Length() - 1); i >=0 ; i--) {
-      parse_class ^= patch_list.At(i);
+    for (intptr_t i = (patch_list.length() - 1); i >=0 ; i--) {
+      const Class& parse_class = patch_list.At(i);
       ASSERT(!parse_class.IsNull());
       ClassFinalizer::FinalizeClass(parse_class);
       parse_class.reset_is_marked_for_parsing();
@@ -356,21 +354,18 @@ RawError* Compiler::CompileClass(const Class& cls) {
     return Error::null();
   } else {
     // Reset the marked for parsing flags.
-    for (intptr_t i = 0; i < parse_list.Length(); i++) {
-      parse_class ^= parse_list.At(i);
+    for (intptr_t i = 0; i < parse_list.length(); i++) {
+      const Class& parse_class = parse_list.At(i);
       if (parse_class.is_marked_for_parsing()) {
         parse_class.reset_is_marked_for_parsing();
       }
     }
-    for (intptr_t i = 0; i < patch_list.Length(); i++) {
-      parse_class ^= patch_list.At(i);
+    for (intptr_t i = 0; i < patch_list.length(); i++) {
+      const Class& parse_class = patch_list.At(i);
       if (parse_class.is_marked_for_parsing()) {
         parse_class.reset_is_marked_for_parsing();
       }
     }
-    Thread* const thread = Thread::Current();
-    Isolate* const isolate = Isolate::Current();
-    StackZone zone(thread);
     Error& error = Error::Handle(isolate);
     error = isolate->object_store()->sticky_error();
     isolate->object_store()->clear_sticky_error();
@@ -394,8 +389,8 @@ static bool CompileParsedFunctionHelper(CompilationPipeline* pipeline,
   Thread* const thread = Thread::Current();
   Zone* const zone = thread->zone();
   Isolate* const isolate = thread->isolate();
-  CSTAT_TIMER_SCOPE(isolate, codegen_timer);
-  HANDLESCOPE(isolate);
+  CSTAT_TIMER_SCOPE(thread, codegen_timer);
+  HANDLESCOPE(thread);
 
   // We may reattempt compilation if the function needs to be assembled using
   // far branches on ARM and MIPS. In the else branch of the setjmp call,
@@ -420,7 +415,7 @@ static bool CompileParsedFunctionHelper(CompilationPipeline* pipeline,
       // TimerScope needs an isolate to be properly terminated in case of a
       // LongJump.
       {
-        CSTAT_TIMER_SCOPE(isolate, graphbuilder_timer);
+        CSTAT_TIMER_SCOPE(thread, graphbuilder_timer);
         ZoneGrowableArray<const ICData*>* ic_data_array =
             new(zone) ZoneGrowableArray<const ICData*>();
         if (optimized) {
@@ -432,7 +427,7 @@ static bool CompileParsedFunctionHelper(CompilationPipeline* pipeline,
           if (FLAG_print_ic_data_map) {
             for (intptr_t i = 0; i < ic_data_array->length(); i++) {
               if ((*ic_data_array)[i] != NULL) {
-                ISL_Print("%" Pd " ", i);
+                THR_Print("%" Pd " ", i);
                 FlowGraphPrinter::PrintICData(*(*ic_data_array)[i]);
               }
             }
@@ -466,7 +461,7 @@ static bool CompileParsedFunctionHelper(CompilationPipeline* pipeline,
       }
 
       if (optimized) {
-        CSTAT_TIMER_SCOPE(isolate, ssa_timer);
+        CSTAT_TIMER_SCOPE(thread, ssa_timer);
         // Transform to SSA (virtual register 0 and no inlining arguments).
         flow_graph->ComputeSSA(0, NULL);
         DEBUG_ASSERT(flow_graph->VerifyUseLists());
@@ -487,7 +482,7 @@ static bool CompileParsedFunctionHelper(CompilationPipeline* pipeline,
         inline_id_to_function.Add(&function);
         // Top scope function has no caller (-1).
         caller_inline_id.Add(-1);
-        CSTAT_TIMER_SCOPE(isolate, graphoptimizer_timer);
+        CSTAT_TIMER_SCOPE(thread, graphoptimizer_timer);
 
         FlowGraphOptimizer optimizer(flow_graph);
         if (Compiler::always_optimize()) {
@@ -505,7 +500,7 @@ static bool CompileParsedFunctionHelper(CompilationPipeline* pipeline,
 
         // Inlining (mutates the flow graph)
         if (FLAG_use_inlining) {
-          CSTAT_TIMER_SCOPE(isolate, graphinliner_timer);
+          CSTAT_TIMER_SCOPE(thread, graphinliner_timer);
           // Propagate types to create more inlining opportunities.
           FlowGraphTypePropagator::Propagate(flow_graph);
           DEBUG_ASSERT(flow_graph->VerifyUseLists());
@@ -719,36 +714,36 @@ static bool CompileParsedFunctionHelper(CompilationPipeline* pipeline,
                                        inline_id_to_function,
                                        caller_inline_id);
       {
-        CSTAT_TIMER_SCOPE(isolate, graphcompiler_timer);
+        CSTAT_TIMER_SCOPE(thread, graphcompiler_timer);
         graph_compiler.CompileGraph();
         pipeline->FinalizeCompilation();
       }
       {
-        CSTAT_TIMER_SCOPE(isolate, codefinalizer_timer);
+        CSTAT_TIMER_SCOPE(thread, codefinalizer_timer);
         // CreateDeoptInfo uses the object pool and needs to be done before
         // FinalizeCode.
         const Array& deopt_info_array =
-            Array::Handle(isolate, graph_compiler.CreateDeoptInfo(&assembler));
-        INC_STAT(isolate, total_code_size,
+            Array::Handle(zone, graph_compiler.CreateDeoptInfo(&assembler));
+        INC_STAT(thread, total_code_size,
                  deopt_info_array.Length() * sizeof(uword));
         const Code& code = Code::Handle(
             Code::FinalizeCode(function, &assembler, optimized));
         code.set_is_optimized(optimized);
 
         const Array& intervals = graph_compiler.inlined_code_intervals();
-        INC_STAT(isolate, total_code_size,
+        INC_STAT(thread, total_code_size,
                  intervals.Length() * sizeof(uword));
         code.SetInlinedIntervals(intervals);
 
         const Array& inlined_id_array =
-            Array::Handle(isolate, graph_compiler.InliningIdToFunction());
-        INC_STAT(isolate, total_code_size,
+            Array::Handle(zone, graph_compiler.InliningIdToFunction());
+        INC_STAT(thread, total_code_size,
                  inlined_id_array.Length() * sizeof(uword));
         code.SetInlinedIdToFunction(inlined_id_array);
 
         const Array& caller_inlining_id_map_array =
-            Array::Handle(isolate, graph_compiler.CallerInliningIdMap());
-        INC_STAT(isolate, total_code_size,
+            Array::Handle(zone, graph_compiler.CallerInliningIdMap());
+        INC_STAT(thread, total_code_size,
                  caller_inlining_id_map_array.Length() * sizeof(uword));
         code.SetInlinedCallerIdMap(caller_inlining_id_map_array);
 
@@ -766,9 +761,9 @@ static bool CompileParsedFunctionHelper(CompilationPipeline* pipeline,
             CodePatcher::PatchEntry(Code::Handle(function.CurrentCode()));
             if (FLAG_trace_compiler || FLAG_trace_patching) {
               if (FLAG_trace_compiler) {
-                ISL_Print("  ");
+                THR_Print("  ");
               }
-              ISL_Print("Patch unoptimized '%s' entry point %#" Px "\n",
+              THR_Print("Patch unoptimized '%s' entry point %#" Px "\n",
                   function.ToFullyQualifiedCString(),
                   Code::Handle(function.unoptimized_code()).EntryPoint());
             }
@@ -827,7 +822,7 @@ static bool CompileParsedFunctionHelper(CompilationPipeline* pipeline,
         // try again (done = true), and indicate that we did not finish
         // compiling (is_compiled = false).
         if (FLAG_trace_bailout) {
-          ISL_Print("%s\n", error.ToErrorCString());
+          THR_Print("%s\n", error.ToErrorCString());
         }
         done = true;
         ASSERT(optimized);
@@ -849,35 +844,35 @@ static bool CompileParsedFunctionHelper(CompilationPipeline* pipeline,
 
 static void DisassembleCode(const Function& function, bool optimized) {
   const char* function_fullname = function.ToFullyQualifiedCString();
-  ISL_Print("Code for %sfunction '%s' {\n",
+  THR_Print("Code for %sfunction '%s' {\n",
             optimized ? "optimized " : "",
             function_fullname);
   const Code& code = Code::Handle(function.CurrentCode());
   code.Disassemble();
-  ISL_Print("}\n");
+  THR_Print("}\n");
 
-  ISL_Print("Pointer offsets for function: {\n");
+  THR_Print("Pointer offsets for function: {\n");
   // Pointer offsets are stored in descending order.
   Object& obj = Object::Handle();
   for (intptr_t i = code.pointer_offsets_length() - 1; i >= 0; i--) {
     const uword addr = code.GetPointerOffsetAt(i) + code.EntryPoint();
     obj = *reinterpret_cast<RawObject**>(addr);
-    ISL_Print(" %d : %#" Px " '%s'\n",
+    THR_Print(" %d : %#" Px " '%s'\n",
               code.GetPointerOffsetAt(i), addr, obj.ToCString());
   }
-  ISL_Print("}\n");
+  THR_Print("}\n");
 
-  ISL_Print("PC Descriptors for function '%s' {\n", function_fullname);
+  THR_Print("PC Descriptors for function '%s' {\n", function_fullname);
   PcDescriptors::PrintHeaderString();
   const PcDescriptors& descriptors =
       PcDescriptors::Handle(code.pc_descriptors());
-  ISL_Print("%s}\n", descriptors.ToCString());
+  THR_Print("%s}\n", descriptors.ToCString());
 
   uword start = Instructions::Handle(code.instructions()).EntryPoint();
   const Array& deopt_table = Array::Handle(code.deopt_info_array());
   intptr_t deopt_table_length = DeoptTable::GetLength(deopt_table);
   if (deopt_table_length > 0) {
-    ISL_Print("DeoptInfo: {\n");
+    THR_Print("DeoptInfo: {\n");
     Smi& offset = Smi::Handle();
     TypedData& info = TypedData::Handle();
     Smi& reason_and_flags = Smi::Handle();
@@ -886,31 +881,31 @@ static void DisassembleCode(const Function& function, bool optimized) {
       const intptr_t reason =
           DeoptTable::ReasonField::decode(reason_and_flags.Value());
       ASSERT((0 <= reason) && (reason < ICData::kDeoptNumReasons));
-      ISL_Print("%4" Pd ": 0x%" Px "  %s  (%s)\n",
+      THR_Print("%4" Pd ": 0x%" Px "  %s  (%s)\n",
                 i,
                 start + offset.Value(),
                 DeoptInfo::ToCString(deopt_table, info),
                 DeoptReasonToCString(
                     static_cast<ICData::DeoptReasonId>(reason)));
     }
-    ISL_Print("}\n");
+    THR_Print("}\n");
   }
 
   const ObjectPool& object_pool = ObjectPool::Handle(code.GetObjectPool());
   object_pool.DebugPrint();
 
-  ISL_Print("Stackmaps for function '%s' {\n", function_fullname);
+  THR_Print("Stackmaps for function '%s' {\n", function_fullname);
   if (code.stackmaps() != Array::null()) {
     const Array& stackmap_table = Array::Handle(code.stackmaps());
     Stackmap& map = Stackmap::Handle();
     for (intptr_t i = 0; i < stackmap_table.Length(); ++i) {
       map ^= stackmap_table.At(i);
-      ISL_Print("%s\n", map.ToCString());
+      THR_Print("%s\n", map.ToCString());
     }
   }
-  ISL_Print("}\n");
+  THR_Print("}\n");
 
-  ISL_Print("Variable Descriptors for function '%s' {\n",
+  THR_Print("Variable Descriptors for function '%s' {\n",
             function_fullname);
   const LocalVarDescriptors& var_descriptors =
       LocalVarDescriptors::Handle(code.GetLocalVarDescriptors());
@@ -923,31 +918,34 @@ static void DisassembleCode(const Function& function, bool optimized) {
     var_descriptors.GetInfo(i, &var_info);
     const int8_t kind = var_info.kind();
     if (kind == RawLocalVarDescriptors::kSavedCurrentContext) {
-      ISL_Print("  saved current CTX reg offset %d\n", var_info.index());
+      THR_Print("  saved current CTX reg offset %d\n", var_info.index());
     } else {
       if (kind == RawLocalVarDescriptors::kContextLevel) {
-        ISL_Print("  context level %d scope %d", var_info.index(),
+        THR_Print("  context level %d scope %d", var_info.index(),
             var_info.scope_id);
       } else if (kind == RawLocalVarDescriptors::kStackVar) {
-        ISL_Print("  stack var '%s' offset %d",
+        THR_Print("  stack var '%s' offset %d",
           var_name.ToCString(), var_info.index());
+      } else if (kind == RawLocalVarDescriptors::kContextVar) {
+        THR_Print("  context var '%s' level %d offset %d",
+            var_name.ToCString(), var_info.scope_id, var_info.index());
       } else {
-        ASSERT(kind == RawLocalVarDescriptors::kContextVar);
-        ISL_Print("  context var '%s' level %d offset %d",
+        ASSERT(kind == RawLocalVarDescriptors::kAsyncOperation);
+        THR_Print("  async operation '%s' level %d offset %d",
             var_name.ToCString(), var_info.scope_id, var_info.index());
       }
-      ISL_Print(" (valid %d-%d)\n", var_info.begin_pos, var_info.end_pos);
+      THR_Print(" (valid %d-%d)\n", var_info.begin_pos, var_info.end_pos);
     }
   }
-  ISL_Print("}\n");
+  THR_Print("}\n");
 
-  ISL_Print("Exception Handlers for function '%s' {\n", function_fullname);
+  THR_Print("Exception Handlers for function '%s' {\n", function_fullname);
   const ExceptionHandlers& handlers =
         ExceptionHandlers::Handle(code.exception_handlers());
-  ISL_Print("%s}\n", handlers.ToCString());
+  THR_Print("%s}\n", handlers.ToCString());
 
   {
-    ISL_Print("Static call target functions {\n");
+    THR_Print("Static call target functions {\n");
     const Array& table = Array::Handle(code.static_calls_target_table());
     Smi& offset = Smi::Handle();
     Function& function = Function::Handle();
@@ -960,18 +958,26 @@ static void DisassembleCode(const Function& function, bool optimized) {
       if (function.IsNull()) {
         Class& cls = Class::Handle();
         cls ^= code.owner();
-        ISL_Print("  0x%" Px ": allocation stub for %s, %p\n",
-            start + offset.Value(),
-            cls.ToCString(),
-            code.raw());
+        if (cls.IsNull()) {
+          const String& code_name = String::Handle(code.Name());
+          THR_Print("  0x%" Px ": %s, %p\n",
+              start + offset.Value(),
+              code_name.ToCString(),
+              code.raw());
+        } else {
+          THR_Print("  0x%" Px ": allocation stub for %s, %p\n",
+              start + offset.Value(),
+              cls.ToCString(),
+              code.raw());
+        }
       } else {
-        ISL_Print("  0x%" Px ": %s, %p\n",
+        THR_Print("  0x%" Px ": %s, %p\n",
             start + offset.Value(),
             function.ToFullyQualifiedCString(),
             code.raw());
       }
     }
-    ISL_Print("}\n");
+    THR_Print("}\n");
   }
   if (optimized && FLAG_trace_inlining_intervals) {
     code.DumpInlinedIntervals();
@@ -1013,9 +1019,9 @@ static RawError* CompileFunctionHelper(CompilationPipeline* pipeline,
   if (setjmp(*jump.Set()) == 0) {
     Thread* const thread = Thread::Current();
     Isolate* const isolate = thread->isolate();
-    StackZone stack_zone(isolate);
+    StackZone stack_zone(thread);
     Zone* const zone = stack_zone.GetZone();
-    TIMERSCOPE(isolate, time_compilation);
+    TIMERSCOPE(thread, time_compilation);
     Timer per_compile_timer(FLAG_trace_compiler, "Compilation time");
     per_compile_timer.Start();
 
@@ -1033,16 +1039,25 @@ static RawError* CompileFunctionHelper(CompilationPipeline* pipeline,
     ParsedFunction* parsed_function = new(zone) ParsedFunction(
         thread, Function::ZoneHandle(zone, function.raw()));
     if (FLAG_trace_compiler) {
-      ISL_Print("Compiling %s%sfunction: '%s' @ token %" Pd ", size %" Pd "\n",
+      THR_Print("Compiling %s%sfunction: '%s' @ token %" Pd ", size %" Pd "\n",
                 (osr_id == Isolate::kNoDeoptId ? "" : "osr "),
                 (optimized ? "optimized " : ""),
                 function.ToFullyQualifiedCString(),
                 function.token_pos(),
                 (function.end_token_pos() - function.token_pos()));
     }
+    INC_STAT(thread, num_functions_compiled, 1);
+    if (optimized) {
+      INC_STAT(thread, num_functions_optimized, 1);
+    }
     {
-      HANDLESCOPE(isolate);
+      HANDLESCOPE(thread);
+      const int64_t num_tokens_before = STAT_VALUE(thread, num_tokens_consumed);
       pipeline->ParseFunction(parsed_function);
+      const int64_t num_tokens_after = STAT_VALUE(thread, num_tokens_consumed);
+      INC_STAT(thread,
+               num_func_tokens_compiled,
+               num_tokens_after - num_tokens_before);
     }
 
     const bool success = CompileParsedFunctionHelper(pipeline,
@@ -1054,10 +1069,10 @@ static RawError* CompileFunctionHelper(CompilationPipeline* pipeline,
         ASSERT(!Compiler::always_optimize());  // Optimized is the only code.
         // Optimizer bailed out. Disable optimizations and never try again.
         if (FLAG_trace_compiler) {
-          ISL_Print("--> disabling optimizations for '%s'\n",
+          THR_Print("--> disabling optimizations for '%s'\n",
                     function.ToFullyQualifiedCString());
         } else if (FLAG_trace_failed_optimization_attempts) {
-          ISL_Print("Cannot optimize: %s\n",
+          THR_Print("Cannot optimize: %s\n",
                     function.ToFullyQualifiedCString());
         }
         function.SetIsOptimizable(false);
@@ -1069,7 +1084,7 @@ static RawError* CompileFunctionHelper(CompilationPipeline* pipeline,
     per_compile_timer.Stop();
 
     if (FLAG_trace_compiler) {
-      ISL_Print("--> '%s' entry: %#" Px " size: %" Pd " time: %" Pd64 " us\n",
+      THR_Print("--> '%s' entry: %#" Px " size: %" Pd " time: %" Pd64 " us\n",
                 function.ToFullyQualifiedCString(),
                 Code::Handle(function.CurrentCode()).EntryPoint(),
                 Code::Handle(function.CurrentCode()).Size(),
@@ -1084,9 +1099,9 @@ static RawError* CompileFunctionHelper(CompilationPipeline* pipeline,
                optimized &&
                FlowGraphPrinter::ShouldPrint(function)) {
       // TODO(fschneider): Print unoptimized code along with the optimized code.
-      ISL_Print("*** BEGIN CODE\n");
+      THR_Print("*** BEGIN CODE\n");
       DisassembleCode(function, true);
-      ISL_Print("*** END CODE\n");
+      THR_Print("*** END CODE\n");
     }
 #if defined(DEBUG)
     CheckInliningIntervals(function);
@@ -1095,7 +1110,7 @@ static RawError* CompileFunctionHelper(CompilationPipeline* pipeline,
   } else {
     Thread* const thread = Thread::Current();
     Isolate* const isolate = thread->isolate();
-    StackZone stack_zone(isolate);
+    StackZone stack_zone(thread);
     Error& error = Error::Handle();
     // We got an error during compilation.
     error = isolate->object_store()->sticky_error();
@@ -1111,7 +1126,7 @@ RawError* Compiler::CompileFunction(Thread* thread,
                                     const Function& function) {
   Isolate* isolate = thread->isolate();
   VMTagScope tagScope(thread, VMTag::kCompileUnoptimizedTagId);
-  TIMELINE_FUNCTION_COMPILATION_DURATION(isolate, "Function", function);
+  TIMELINE_FUNCTION_COMPILATION_DURATION(thread, "Function", function);
 
   if (!isolate->compilation_allowed()) {
     FATAL3("Precompilation missed function %s (%" Pd ", %s)\n",
@@ -1132,7 +1147,7 @@ RawError* Compiler::CompileFunction(Thread* thread,
 
 
 RawError* Compiler::EnsureUnoptimizedCode(Thread* thread,
-                                     const Function& function) {
+                                          const Function& function) {
   if (function.unoptimized_code() != Object::null()) {
     return Error::null();
   }
@@ -1155,7 +1170,7 @@ RawError* Compiler::EnsureUnoptimizedCode(Thread* thread,
   }
   ASSERT(function.unoptimized_code() != Object::null());
   if (FLAG_trace_compiler) {
-    ISL_Print("Ensure unoptimized code for %s\n", function.ToCString());
+    THR_Print("Ensure unoptimized code for %s\n", function.ToCString());
   }
   return Error::null();
 }
@@ -1164,9 +1179,8 @@ RawError* Compiler::EnsureUnoptimizedCode(Thread* thread,
 RawError* Compiler::CompileOptimizedFunction(Thread* thread,
                                              const Function& function,
                                              intptr_t osr_id) {
-  Isolate* isolate = thread->isolate();
   VMTagScope tagScope(thread, VMTag::kCompileOptimizedTagId);
-  TIMELINE_FUNCTION_COMPILATION_DURATION(isolate,
+  TIMELINE_FUNCTION_COMPILATION_DURATION(thread,
                                          "OptimizedFunction", function);
 
   CompilationPipeline* pipeline =
@@ -1272,25 +1286,17 @@ RawError* Compiler::CompileAllFunctions(const Class& cls) {
 }
 
 
-static void CreateLocalVarDescriptors(const ParsedFunction& parsed_function) {
-  const Function& func = parsed_function.function();
-  LocalVarDescriptors& var_descs = LocalVarDescriptors::Handle();
-  var_descs = parsed_function.node_sequence()->scope()->GetVarDescriptors(func);
-  Code::Handle(func.unoptimized_code()).set_var_descriptors(var_descs);
-}
-
-
 void Compiler::CompileStaticInitializer(const Field& field) {
   ASSERT(field.is_static());
-  if (field.initializer() != Function::null()) {
+  if (field.PrecompiledInitializer() != Function::null()) {
     // TODO(rmacnak): Investigate why this happens for _enum_names.
     OS::Print("Warning: Ignoring repeated request for initializer for %s\n",
               field.ToCString());
     return;
   }
-  ASSERT(field.initializer() == Function::null());
-  Isolate* isolate = Isolate::Current();
-  StackZone zone(isolate);
+  ASSERT(field.PrecompiledInitializer() == Function::null());
+  Thread* thread = Thread::Current();
+  StackZone zone(thread);
 
   ParsedFunction* parsed_function = Parser::ParseStaticFieldInitializer(field);
 
@@ -1303,7 +1309,7 @@ void Compiler::CompileStaticInitializer(const Field& field) {
                               Isolate::kNoDeoptId);
 
   const Function& initializer = parsed_function->function();
-  field.set_initializer(initializer);
+  field.SetPrecompiledInitializer(initializer);
 }
 
 
@@ -1311,18 +1317,17 @@ RawObject* Compiler::EvaluateStaticInitializer(const Field& field) {
   ASSERT(field.is_static());
   // The VM sets the field's value to transiton_sentinel prior to
   // evaluating the initializer value.
-  ASSERT(field.value() == Object::transition_sentinel().raw());
+  ASSERT(field.StaticValue() == Object::transition_sentinel().raw());
   LongJumpScope jump;
   if (setjmp(*jump.Set()) == 0) {
-    Function& initializer = Function::Handle(field.initializer());
-
     // Under precompilation, the initializer may have already been compiled, in
     // which case use it. Under lazy compilation or early in precompilation, the
     // initializer has not yet been created, so create it now, but don't bother
     // remembering it because it won't be used again.
-    if (initializer.IsNull()) {
-      Isolate* const isolate = Isolate::Current();
-      StackZone zone(isolate);
+    Function& initializer = Function::Handle();
+    if (!field.HasPrecompiledInitializer()) {
+      Thread* const thread = Thread::Current();
+      StackZone zone(thread);
       ParsedFunction* parsed_function =
           Parser::ParseStaticFieldInitializer(field);
 
@@ -1333,20 +1338,18 @@ RawObject* Compiler::EvaluateStaticInitializer(const Field& field) {
                                   parsed_function,
                                   false,  // optimized
                                   Isolate::kNoDeoptId);
-      // Eagerly create local var descriptors.
-      CreateLocalVarDescriptors(*parsed_function);
-
       initializer = parsed_function->function().raw();
+    } else {
+      initializer ^= field.PrecompiledInitializer();
     }
     // Invoke the function to evaluate the expression.
-    const Object& result = PassiveObject::Handle(
-        DartEntry::InvokeFunction(initializer, Object::empty_array()));
-    return result.raw();
+    return DartEntry::InvokeFunction(initializer, Object::empty_array());
   } else {
-    Isolate* const isolate = Isolate::Current();
-    StackZone zone(isolate);
+    Thread* const thread = Thread::Current();
+    Isolate* const isolate = thread->isolate();
+    StackZone zone(thread);
     const Error& error =
-        Error::Handle(isolate, isolate->object_store()->sticky_error());
+        Error::Handle(thread->zone(), isolate->object_store()->sticky_error());
     isolate->object_store()->clear_sticky_error();
     return error.raw();
   }
@@ -1361,7 +1364,7 @@ RawObject* Compiler::ExecuteOnce(SequenceNode* fragment) {
   if (setjmp(*jump.Set()) == 0) {
     Thread* const thread = Thread::Current();
     if (FLAG_trace_compiler) {
-      ISL_Print("compiling expression: ");
+      THR_Print("compiling expression: ");
       AstPrinter::PrintNode(fragment);
     }
 
@@ -1392,7 +1395,6 @@ RawObject* Compiler::ExecuteOnce(SequenceNode* fragment) {
     // here.
     ParsedFunction* parsed_function = new ParsedFunction(thread, func);
     parsed_function->SetNodeSequence(fragment);
-    parsed_function->set_default_parameter_values(Object::null_array());
     fragment->scope()->AddVariable(parsed_function->EnsureExpressionTemp());
     fragment->scope()->AddVariable(
         parsed_function->current_context_var());
@@ -1405,8 +1407,6 @@ RawObject* Compiler::ExecuteOnce(SequenceNode* fragment) {
                                 false,
                                 Isolate::kNoDeoptId);
 
-    // Eagerly create local var descriptors.
-    CreateLocalVarDescriptors(*parsed_function);
     const Object& result = PassiveObject::Handle(
         DartEntry::InvokeFunction(func, Object::empty_array()));
     return result.raw();

@@ -2,9 +2,6 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-// This code was auto-generated, is not intended to be edited, and is subject to
-// significant change. Please see the README file for more information.
-
 library engine.engine_test;
 
 import 'dart:async';
@@ -34,7 +31,7 @@ import 'package:analyzer/src/generated/testing/element_factory.dart';
 import 'package:analyzer/src/generated/utilities_collection.dart';
 import 'package:analyzer/src/services/lint.dart';
 import 'package:analyzer/src/string_source.dart';
-import 'package:analyzer/task/model.dart' hide AnalysisTask;
+import 'package:analyzer/task/model.dart' hide AnalysisTask, WorkManager;
 import 'package:html/dom.dart' show Document;
 import 'package:path/path.dart' as pathos;
 import 'package:typed_mock/typed_mock.dart';
@@ -5904,6 +5901,12 @@ class TestAnalysisContext implements InternalAnalysisContext {
   }
 
   @override
+  Object computeResult(AnalysisTarget target, ResultDescriptor result) {
+    fail("Unexpected invocation of computeResult");
+    return null;
+  }
+
+  @override
   void dispose() {
     fail("Unexpected invocation of dispose");
   }
@@ -6042,6 +6045,12 @@ class TestAnalysisContext implements InternalAnalysisContext {
   @deprecated
   ht.HtmlUnit getResolvedHtmlUnit(Source htmlSource) {
     fail("Unexpected invocation of getResolvedHtmlUnit");
+    return null;
+  }
+
+  @override
+  Object getResult(AnalysisTarget target, ResultDescriptor result) {
+    fail("Unexpected invocation of getResult");
     return null;
   }
 

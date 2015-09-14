@@ -4,54 +4,63 @@
 
 library type_graph_inferrer;
 
-import 'dart:collection' show Queue, IterableBase;
+import 'dart:collection' show
+    IterableBase,
+    Queue;
 
-import '../compiler.dart'
-    show Compiler;
+import '../common/names.dart' show
+    Identifiers,
+    Names;
+import '../compiler.dart' show
+    Compiler;
 import '../constants/values.dart';
-import '../cps_ir/cps_ir_nodes.dart' as cps_ir
-    show Node;
-import '../dart_types.dart'
-    show DartType,
-         FunctionType,
-         InterfaceType,
-         TypeKind;
-import '../diagnostics/invariant.dart'
-    show invariant;
-import '../diagnostics/spannable.dart'
-    show Spannable;
+import '../cps_ir/cps_ir_nodes.dart' as cps_ir show
+    Node;
+import '../dart_types.dart' show
+    DartType,
+    FunctionType,
+    InterfaceType,
+    TypeKind;
+import '../diagnostics/invariant.dart' show
+    invariant;
+import '../diagnostics/spannable.dart' show
+    Spannable;
 import '../elements/elements.dart';
+import '../js_backend/js_backend.dart' show
+    Annotations,
+    JavaScriptBackend;
 import '../native/native.dart' as native;
-import '../resolution/resolution.dart'
-    show TreeElementMapping;
-import '../tree/tree.dart' as ast
-    show DartString,
-         Node,
-         Send,
-         SendSet,
-         TryStatement;
-import '../types/types.dart'
-    show ContainerTypeMask,
-         DictionaryTypeMask,
-         MapTypeMask,
-         TypeMask,
-         TypesInferrer,
-         ValueTypeMask;
-import '../types/constants.dart'
-    show computeTypeMask;
-import '../universe/universe.dart'
-    show Selector,
-         SideEffects,
-         TypedSelector;
-import '../util/util.dart'
-    show ImmutableEmptySet,
-         Setlet;
-import '../js_backend/js_backend.dart' show Annotations, JavaScriptBackend;
-import '../world.dart' show ClassWorld;
+import '../resolution/tree_elements.dart' show
+    TreeElementMapping;
+import '../tree/tree.dart' as ast show
+    DartString,
+    Node,
+    Send,
+    SendSet,
+    TryStatement;
+import '../types/types.dart' show
+    ContainerTypeMask,
+    DictionaryTypeMask,
+    MapTypeMask,
+    TypeMask,
+    TypesInferrer,
+    ValueTypeMask;
+import '../types/constants.dart' show
+    computeTypeMask;
+import '../universe/universe.dart' show
+    CallStructure,
+    Selector,
+    SideEffects,
+    TypedSelector;
+import '../util/util.dart' show
+    ImmutableEmptySet,
+    Setlet;
+import '../world.dart' show
+    ClassWorld;
 
-import 'inferrer_visitor.dart'
-    show ArgumentsTypes,
-         TypeSystem;
+import 'inferrer_visitor.dart' show
+    ArgumentsTypes,
+    TypeSystem;
 import 'simple_types_inferrer.dart';
 
 part 'closure_tracer.dart';
@@ -580,14 +589,14 @@ class TypeGraphInferrerEngine
    */
   final Set<Selector> _returnsListElementTypeSet = new Set<Selector>.from(
     <Selector>[
-      new Selector.getter('first', null),
-      new Selector.getter('last', null),
-      new Selector.getter('single', null),
-      new Selector.call('singleWhere', null, 1),
-      new Selector.call('elementAt', null, 1),
+      new Selector.getter(const PublicName('first')),
+      new Selector.getter(const PublicName('last')),
+      new Selector.getter(const PublicName('single')),
+      new Selector.call(const PublicName('singleWhere'), CallStructure.ONE_ARG),
+      new Selector.call(const PublicName('elementAt'), CallStructure.ONE_ARG),
       new Selector.index(),
-      new Selector.call('removeAt', null, 1),
-      new Selector.call('removeLast', null, 0)
+      new Selector.call(const PublicName('removeAt'), CallStructure.ONE_ARG),
+      new Selector.call(const PublicName('removeLast'), CallStructure.NO_ARGS)
     ]);
 
   bool returnsListElementType(Selector selector, TypeMask mask) {
@@ -727,8 +736,7 @@ class TypeGraphInferrerEngine
           // need to trace the call method here.
           assert(info.calledElement.isConstructor);
           ClassElement cls = info.calledElement.enclosingClass;
-          FunctionElement callMethod =
-              cls.lookupMember(Compiler.CALL_OPERATOR_NAME);
+          FunctionElement callMethod = cls.lookupMember(Identifiers.call);
           assert(invariant(cls, callMethod != null));
           Iterable<FunctionElement> elements = [callMethod];
           trace(elements, new ClosureTracerVisitor(elements, info, this));
@@ -794,8 +802,7 @@ class TypeGraphInferrerEngine
           }
         } else if (info is StaticCallSiteTypeInformation) {
           ClassElement cls = info.calledElement.enclosingClass;
-          FunctionElement callMethod =
-              cls.lookupMember(Compiler.CALL_OPERATOR_NAME);
+          FunctionElement callMethod = cls.lookupMember(Identifiers.call);
           print('${types.getInferredSignatureOf(callMethod)} for ${cls}');
         } else {
           print('${info.type} for some unknown kind of closure');
@@ -946,7 +953,7 @@ class TypeGraphInferrerEngine
                                   Selector selector,
                                   TypeMask mask,
                                   {bool remove, bool addToQueue: true}) {
-    if (callee.name == Compiler.NO_SUCH_METHOD) return;
+    if (callee.name == Identifiers.noSuchMethod_) return;
     if (callee.isField) {
       if (selector.isSetter) {
         ElementTypeInformation info = types.getInferredTypeOf(callee);
@@ -1261,7 +1268,7 @@ class TypeGraphInferrerEngine
    */
   TypeInformation typeOfElementWithSelector(Element element,
                                             Selector selector) {
-    if (element.name == Compiler.NO_SUCH_METHOD &&
+    if (element.name == Identifiers.noSuchMethod_ &&
         selector.name != element.name) {
       // An invocation can resolve to a [noSuchMethod], in which case
       // we get the return type of [noSuchMethod].

@@ -94,8 +94,7 @@ class RedundantJoinEliminator extends RecursiveVisitor implements Pass {
     // enclosing continuation.
     // Note: Do not use the parent pointer for this check, because parameters
     // are temporarily shared between different continuations during this pass.
-    IsTrue isTrue = branch.condition;
-    Primitive condition = isTrue.value.definition;
+    Primitive condition = branch.condition.definition;
     int parameterIndex = branchCont.parameters.indexOf(condition);
     if (parameterIndex == -1) return;
 
@@ -110,12 +109,12 @@ class RedundantJoinEliminator extends RecursiveVisitor implements Pass {
       Primitive argument = invoke.arguments[parameterIndex].definition;
       if (argument is! Constant) return; // Branching condition is unknown.
       Constant constant = argument;
-      if (isFalsyConstant(constant.value)) {
-        ++falseHits;
-        falseCall = invoke;
-      } else {
+      if (isTruthyConstant(constant.value, strict: branch.isStrictCheck)) {
         ++trueHits;
         trueCall = invoke;
+      } else {
+        ++falseHits;
+        falseCall = invoke;
       }
     }
 
@@ -183,10 +182,10 @@ class RedundantJoinEliminator extends RecursiveVisitor implements Pass {
       Reference reference = branchCont.firstRef;
       InvokeContinuation invoke = branchCont.firstRef.parent;
       Constant condition = invoke.arguments[parameterIndex].definition;
-      if (isFalsyConstant(condition.value)) {
-        invoke.continuation.changeTo(falseCont);
-      } else {
+      if (isTruthyConstant(condition.value, strict: branch.isStrictCheck)) {
         invoke.continuation.changeTo(trueCont);
+      } else {
+        invoke.continuation.changeTo(falseCont);
       }
       assert(branchCont.firstRef != reference);
     }

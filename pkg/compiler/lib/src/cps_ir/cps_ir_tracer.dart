@@ -227,10 +227,11 @@ class IRTracer extends TracerUtil implements cps_ir.Visitor {
 
   visitBranch(cps_ir.Branch node) {
     String dummy = names.name(node);
-    String condition = visit(node.condition);
+    String condition = formatReference(node.condition);
     String trueCont = formatReference(node.trueContinuation);
     String falseCont = formatReference(node.falseContinuation);
-    printStmt(dummy, "Branch $condition ($trueCont, $falseCont)");
+    String strict = node.isStrictCheck ? "Strict" : "NonStrict";
+    printStmt(dummy, "Branch $condition ($trueCont, $falseCont) $strict");
   }
 
   visitSetMutable(cps_ir.SetMutable node) {
@@ -264,10 +265,6 @@ class IRTracer extends TracerUtil implements cps_ir.Visitor {
 
   visitContinuation(cps_ir.Continuation node) {
     return "Continuation ${names.name(node)}";
-  }
-
-  visitIsTrue(cps_ir.IsTrue node) {
-    return "IsTrue(${names.name(node.value.definition)})";
   }
 
   visitSetField(cps_ir.SetField node) {
@@ -395,6 +392,12 @@ class IRTracer extends TracerUtil implements cps_ir.Visitor {
     String value = formatReference(node.input);
     String continuation = formatReference(node.continuation);
     return 'Await $value $continuation';
+  }
+
+  @override
+  visitRefinement(cps_ir.Refinement node) {
+    String value = formatReference(node.value);
+    return 'Refinement $value ${node.type}';
   }
 }
 
@@ -607,10 +610,6 @@ class BlockCollector implements cps_ir.Visitor {
     unexpectedNode(node);
   }
 
-  visitIsTrue(cps_ir.IsTrue node) {
-    unexpectedNode(node);
-  }
-
   visitInterceptor(cps_ir.Interceptor node) {
     unexpectedNode(node);
   }
@@ -674,6 +673,10 @@ class BlockCollector implements cps_ir.Visitor {
 
   @override
   visitAwait(cps_ir.Await node) {
+    unexpectedNode(node);
+  }
+
+  visitRefinement(cps_ir.Refinement node) {
     unexpectedNode(node);
   }
 }

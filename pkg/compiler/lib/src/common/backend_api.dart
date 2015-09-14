@@ -46,7 +46,7 @@ import '../native/native.dart' as native show
     NativeEnqueuer;
 import '../patch_parser.dart' show
     checkNativeAnnotation;
-import '../resolution/resolution.dart' show
+import '../resolution/tree_elements.dart' show
     TreeElements;
 
 import 'codegen.dart' show
@@ -338,6 +338,13 @@ abstract class Backend {
   bool onQueueEmpty(Enqueuer enqueuer, Iterable<ClassElement> recentClasses) {
     return true;
   }
+
+  /// Called after the queue is closed. [onQueueEmpty] may be called multiple
+  /// times, but [onQueueClosed] is only called once.
+  void onQueueClosed() {}
+
+  /// Called when the compiler starts running the codegen enqueuer.
+  void onCodegenStart() {}
 
   /// Called after [element] has been resolved.
   // TODO(johnniwinther): Change [TreeElements] to [Registry] or a dependency

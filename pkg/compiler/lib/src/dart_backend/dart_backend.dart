@@ -13,6 +13,9 @@ import '../common/backend_api.dart' show
     Backend;
 import '../common/codegen.dart' show
     CodegenWorkItem;
+import '../common/names.dart' show
+    Selectors,
+    Uris;
 import '../common/registry.dart' show
     Registry;
 import '../common/resolution.dart' show
@@ -20,8 +23,7 @@ import '../common/resolution.dart' show
 import '../common/tasks.dart' show
     CompilerTask;
 import '../compiler.dart' show
-    Compiler,
-    isPrivateName;
+    Compiler;
 import '../compile_time_constants.dart';
 import '../constants/constant_system.dart';
 import '../constants/expressions.dart';
@@ -44,16 +46,11 @@ import '../enqueue.dart' show
 import '../library_loader.dart' show
     LoadedLibraries;
 import '../mirror_renamer/mirror_renamer.dart';
-import '../resolution/resolution.dart' show
+import '../resolution/tree_elements.dart' show
     TreeElements,
     TreeElementMapping;
-import '../scanner/scannerlib.dart' show
-    StringToken,
-    Keyword,
-    OPEN_PAREN_INFO,
-    CLOSE_PAREN_INFO,
-    SEMICOLON_INFO,
-    IDENTIFIER_INFO;
+import '../tokens/keyword.dart' show
+    Keyword;
 import '../tree/tree.dart';
 import '../universe/universe.dart' show
     Selector,

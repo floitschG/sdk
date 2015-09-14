@@ -571,7 +571,7 @@ void Exceptions::ThrowRangeError(const char* argument_name,
   args.SetAt(1, Integer::Handle(Integer::New(expected_from)));
   args.SetAt(2, Integer::Handle(Integer::New(expected_to)));
   args.SetAt(3, String::Handle(String::New(argument_name)));
-  Exceptions::ThrowByType(Exceptions::kRangeRange, args);
+  Exceptions::ThrowByType(Exceptions::kRange, args);
 }
 
 
@@ -588,15 +588,16 @@ RawObject* Exceptions::Create(ExceptionType type, const Array& arguments) {
     case kRange:
       library = Library::CoreLibrary();
       class_name = &Symbols::RangeError();
-      break;
-    case kRangeRange:
-      library = Library::CoreLibrary();
-      class_name = &Symbols::RangeError();
       constructor_name = &Symbols::DotRange();
       break;
     case kArgument:
       library = Library::CoreLibrary();
       class_name = &Symbols::ArgumentError();
+      break;
+    case kArgumentValue:
+      library = Library::CoreLibrary();
+      class_name = &Symbols::ArgumentError();
+      constructor_name = &Symbols::DotValue();
       break;
     case kNoSuchMethod:
       library = Library::CoreLibrary();

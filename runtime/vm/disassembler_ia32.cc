@@ -479,11 +479,8 @@ static const char* ObjectToCStringNoGC(const Object& obj) {
 
   const Class& clazz = Class::Handle(obj.clazz());
   const char* full_class_name = clazz.ToCString();
-  const char* format = "instance of %s";
-  intptr_t len = OS::SNPrint(NULL, 0, format, full_class_name) + 1;
-  char* chars = Thread::Current()->zone()->Alloc<char>(len);
-  OS::SNPrint(chars, len, format, full_class_name);
-  return chars;
+  return OS::SCreate(Thread::Current()->zone(),
+      "instance of %s", full_class_name);
 }
 
 
@@ -1405,17 +1402,17 @@ int X86Decoder::InstructionDecode(uword pc) {
             data += 5;
           } else if (*(data+2) == 0x80 &&
                      *(data+3) == 0x00 &&
-                     *(data+3) == 0x00 &&
-                     *(data+3) == 0x00 &&
-                     *(data+4) == 0x00) {
+                     *(data+4) == 0x00 &&
+                     *(data+5) == 0x00 &&
+                     *(data+6) == 0x00) {
             Print("nop");
             data += 7;
           } else if (*(data+2) == 0x84 &&
                      *(data+3) == 0x00 &&
-                     *(data+3) == 0x00 &&
-                     *(data+3) == 0x00 &&
-                     *(data+3) == 0x00 &&
-                     *(data+4) == 0x00) {
+                     *(data+4) == 0x00 &&
+                     *(data+5) == 0x00 &&
+                     *(data+6) == 0x00 &&
+                     *(data+7) == 0x00) {
             Print("nop");
             data += 8;
           } else {

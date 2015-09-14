@@ -852,7 +852,9 @@ class LiteralInt extends Literal<int> {
   int get value {
     try {
       Token valueToken = token;
-      if (identical(valueToken.kind, PLUS_TOKEN)) valueToken = valueToken.next;
+      if (identical(valueToken.kind, Tokens.PLUS_TOKEN)) {
+        valueToken = valueToken.next;
+      }
       return int.parse(valueToken.value);
     } on FormatException catch (ex) {
       (this.handler)(token, ex);
@@ -871,7 +873,9 @@ class LiteralDouble extends Literal<double> {
   double get value {
     try {
       Token valueToken = token;
-      if (identical(valueToken.kind, PLUS_TOKEN)) valueToken = valueToken.next;
+      if (identical(valueToken.kind, Tokens.PLUS_TOKEN)) {
+        valueToken = valueToken.next;
+      }
       return double.parse(valueToken.value);
     } on FormatException catch (ex) {
       (this.handler)(token, ex);
@@ -1087,7 +1091,7 @@ class Return extends Statement {
   bool get hasExpression => expression != null;
 
   /// `true` if this return is of the form `=> e;`.
-  bool get isArrowBody => beginToken.info == FUNCTION_INFO;
+  bool get isArrowBody => beginToken.info == Precedence.FUNCTION_INFO;
 
   accept(Visitor visitor) => visitor.visitReturn(this);
 
@@ -1893,7 +1897,7 @@ class LabeledStatement extends Statement {
 }
 
 abstract class LibraryTag extends Node {
-  final Link<MetadataAnnotation> metadata;
+  final List<MetadataAnnotation> metadata;
 
   LibraryTag(this.metadata);
 
@@ -1911,7 +1915,7 @@ class LibraryName extends LibraryTag {
 
   LibraryName(this.libraryKeyword,
               this.name,
-              Link<MetadataAnnotation> metadata)
+              List<MetadataAnnotation> metadata)
     : super(metadata);
 
   bool get isLibraryName => true;
@@ -1938,7 +1942,7 @@ abstract class LibraryDependency extends LibraryTag {
 
   LibraryDependency(this.uri,
                     this.combinators,
-                    Link<MetadataAnnotation> metadata)
+                    List<MetadataAnnotation> metadata)
     : super(metadata);
 
   LibraryDependency asLibraryDependency() => this;
@@ -1958,7 +1962,7 @@ class Import extends LibraryDependency {
 
   Import(this.importKeyword, StringNode uri,
          this.prefix, NodeList combinators,
-         Link<MetadataAnnotation> metadata,
+         List<MetadataAnnotation> metadata,
          {this.isDeferred})
       : super(uri, combinators, metadata);
 
@@ -2023,7 +2027,7 @@ class Export extends LibraryDependency {
   Export(this.exportKeyword,
          StringNode uri,
          NodeList combinators,
-         Link<MetadataAnnotation> metadata)
+         List<MetadataAnnotation> metadata)
       : super(uri, combinators, metadata);
 
   bool get isExport => true;
@@ -2050,7 +2054,7 @@ class Part extends LibraryTag {
 
   final Token partKeyword;
 
-  Part(this.partKeyword, this.uri, Link<MetadataAnnotation> metadata)
+  Part(this.partKeyword, this.uri, List<MetadataAnnotation> metadata)
     : super(metadata);
 
   bool get isPart => true;
@@ -2071,7 +2075,7 @@ class PartOf extends Node {
 
   final Token partKeyword;
 
-  final Link<MetadataAnnotation> metadata;
+  final List<MetadataAnnotation> metadata;
 
   PartOf(this.partKeyword, this.name, this.metadata);
 

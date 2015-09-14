@@ -7,8 +7,11 @@ library dump_info;
 import 'dart:convert'
     show HtmlEscape, JsonEncoder, StringConversionSink, ChunkedConversionSink;
 
+import 'package:dart2js_info/info.dart';
+
 import 'common/tasks.dart' show
     CompilerTask;
+import 'constants/values.dart' show ConstantValue;
 import 'compiler.dart' show
     Compiler;
 import 'diagnostics/messages.dart' show
@@ -21,7 +24,6 @@ import 'types/types.dart' show
     TypeMask;
 import 'deferred_load.dart' show
     OutputUnit;
-import 'info/info.dart';
 import 'js_backend/js_backend.dart' show
     JavaScriptBackend;
 import 'js_emitter/full_emitter/emitter.dart' as full show
@@ -36,11 +38,23 @@ class ElementInfoCollector extends BaseElementVisitor<Info, dynamic> {
 
   final AllInfo result = new AllInfo();
   final Map<Element, Info> _elementToInfo = <Element, Info>{};
+  final Map<ConstantValue, Info> _constantToInfo = <ConstantValue, Info>{};
   final Map<OutputUnit, OutputUnitInfo> _outputToInfo = {};
 
   ElementInfoCollector(this.compiler);
 
-  void run() => compiler.libraryLoader.libraries.forEach(visit);
+  void run() {
+    compiler.dumpInfoTask._constantToNode.forEach((constant, node) {
+      // TODO(sigmund): add dependencies on other constants
+      var size = compiler.dumpInfoTask._nodeToSize[node];
+      var code = jsAst.prettyPrint(node, compiler).getText();
+      var info = new ConstantInfo(size: size, code: code);
+      _constantToInfo[constant] = info;
+      result.constants.add(info);
+
+    });
+    compiler.libraryLoader.libraries.forEach(visit);
+  }
 
   Info visit(Element e, [_]) => e.accept(this, null);
 
@@ -114,26 +128,31 @@ class ElementInfoCollector extends BaseElementVisitor<Info, dynamic> {
     TypeMask inferredType =
         compiler.typesTask.getGuaranteedTypeOfElement(element);
     // If a field has an empty inferred type it is never used.
-    if (inferredType == null || inferredType.isEmpty || element.isConst) {
-      return null;
-    }
+    if (inferredType == null || inferredType.isEmpty) return null;
 
     int size = compiler.dumpInfoTask.sizeOf(element);
-    String code;
-    StringBuffer emittedCode = compiler.dumpInfoTask.codeOf(element);
-    if (emittedCode != null) {
-      size += emittedCode.length;
-      code = emittedCode.toString();
-    }
+    String code = compiler.dumpInfoTask.codeOf(element);
+    if (code != null) size += code.length;
 
     FieldInfo info = new FieldInfo(
         name: element.name,
+        // We use element.hashCode because it is globally unique and it is
+        // available while we are doing codegen.
+        coverageId: '${element.hashCode}',
         type: '${element.type}',
         inferredType: '$inferredType',
         size: size,
         code: code,
-        outputUnit: _unitInfoForElement(element));
+        outputUnit: _unitInfoForElement(element),
+        isConst: element.isConst);
     _elementToInfo[element] = info;
+    if (element.isConst) {
+      var value = compiler.backend.constantCompilerTask
+          .getConstantValueForVariable(element);
+      if (value != null) {
+        info.initializer = _constantToInfo[value];
+      }
+    }
 
     List<FunctionInfo> nestedClosures = <FunctionInfo>[];
     for (Element closure in element.nestedClosures) {
@@ -238,8 +257,7 @@ class ElementInfoCollector extends BaseElementVisitor<Info, dynamic> {
         isConst: element.isConst,
         isFactory: element.isFactoryConstructor,
         isExternal: element.isPatched);
-    StringBuffer emittedCode = compiler.dumpInfoTask.codeOf(element);
-    String code = emittedCode == null ? null : '$emittedCode';
+    String code = compiler.dumpInfoTask.codeOf(element);
 
     List<ParameterInfo> parameters = <ParameterInfo>[];
     if (element.hasFunctionSignature) {
@@ -268,6 +286,9 @@ class ElementInfoCollector extends BaseElementVisitor<Info, dynamic> {
 
     FunctionInfo info = new FunctionInfo(
         name: name,
+        // We use element.hashCode because it is globally unique and it is
+        // available while we are doing codegen.
+        coverageId: '${element.hashCode}',
         modifiers: modifiers,
         size: size,
         returnType: returnType,
@@ -340,6 +361,8 @@ class DumpInfoTask extends CompilerTask {
   // A mapping from Dart Elements to Javascript AST Nodes.
   final Map<Element, List<jsAst.Node>> _elementToNodes =
       <Element, List<jsAst.Node>>{};
+  final Map<ConstantValue, jsAst.Node> _constantToNode =
+      <ConstantValue, jsAst.Node>{};
   // A mapping from Javascript AST Nodes to the size of their
   // pretty-printed contents.
   final Map<jsAst.Node, int> _nodeToSize = <jsAst.Node, int>{};
@@ -419,6 +442,15 @@ class DumpInfoTask extends CompilerTask {
     }
   }
 
+  void registerConstantAst(ConstantValue constant, jsAst.Node code) {
+    if (compiler.dumpInfo) {
+      assert(_constantToNode[constant] == null ||
+          _constantToNode[constant] == code);
+      _constantToNode[constant] = code;
+      _tracking.add(code);
+    }
+  }
+
   // Records the size of a dart AST node after it has been
   // pretty-printed into the output buffer.
   void recordAstSize(jsAst.Node node, int size) {
@@ -440,14 +472,12 @@ class DumpInfoTask extends CompilerTask {
   }
 
   int sizeOfNode(jsAst.Node node) {
-    if (_nodeToSize.containsKey(node)) {
-      return _nodeToSize[node];
-    } else {
-      return 0;
-    }
+    // TODO(sigmund): switch back to null aware operators (issue #24136)
+    var size = _nodeToSize[node];
+    return size == null ? 0 : size;
   }
 
-  StringBuffer codeOf(Element element) {
+  String codeOf(Element element) {
     List<jsAst.Node> code = _elementToNodes[element];
     if (code == null) return null;
     // Concatenate rendered ASTs.
@@ -455,7 +485,7 @@ class DumpInfoTask extends CompilerTask {
     for (jsAst.Node ast in code) {
       sb.writeln(jsAst.prettyPrint(ast, compiler).getText());
     }
-    return sb;
+    return sb.toString();
   }
 
   void collectInfo() {

@@ -63,11 +63,14 @@
 
 library dart2js.messages;
 
+import '../tokens/token.dart' show
+    ErrorToken,
+    Token;
+
 import 'invariant.dart' show
     invariant;
 import 'spannable.dart' show
     CURRENT_ELEMENT_SPANNABLE;
-import '../scanner/scannerlib.dart';
 
 const DONT_KNOW_HOW_TO_FIX = "Computer says no!";
 
@@ -163,6 +166,7 @@ enum MessageKind {
   DEFERRED_TYPE_ANNOTATION,
   DEPRECATED_TYPEDEF_MIXIN_SYNTAX,
   DIRECTLY_THROWING_NSM,
+  DISALLOWED_LIBRARY_IMPORT,
   DUPLICATE_DEFINITION,
   DUPLICATE_EXPORT,
   DUPLICATE_EXPORT_CONT,
@@ -194,6 +198,7 @@ enum MessageKind {
   FACTORY_REDIRECTION_IN_NON_FACTORY,
   FINAL_FUNCTION_TYPE_PARAMETER,
   FINAL_WITHOUT_INITIALIZER,
+  FORIN_NOT_ASSIGNABLE,
   FORMAL_DECLARED_CONST,
   FORMAL_DECLARED_STATIC,
   FUNCTION_TYPE_FORMAL_WITH_DEFAULT,
@@ -256,6 +261,7 @@ enum MessageKind {
   INVALID_OVERRIDE_METHOD,
   INVALID_OVERRIDE_SETTER,
   INVALID_OVERRIDE_SETTER_WITH_FIELD,
+  INVALID_PACKAGE_CONFIG,
   INVALID_PACKAGE_URI,
   INVALID_PARAMETER,
   INVALID_RECEIVER_IN_INITIALIZER,
@@ -268,6 +274,7 @@ enum MessageKind {
   INVALID_USE_OF_SUPER,
   LIBRARY_NAME_MISMATCH,
   LIBRARY_NOT_FOUND,
+  LIBRARY_NOT_SUPPORTED,
   LIBRARY_TAG_MUST_BE_FIRST,
   MAIN_NOT_A_FUNCTION,
   MAIN_WITH_EXTRA_PARAMETER,
@@ -305,6 +312,7 @@ enum MessageKind {
   NATIVE_NOT_SUPPORTED,
   NO_BREAK_TARGET,
   NO_CATCH_NOR_FINALLY,
+  NO_COMMON_SUBTYPES,
   NO_CONTINUE_TARGET,
   NO_INSTANCE_AVAILABLE,
   NO_MATCHING_CONSTRUCTOR,
@@ -417,6 +425,7 @@ enum MessageKind {
   UNIMPLEMENTED_SETTER,
   UNIMPLEMENTED_SETTER_ONE,
   UNMATCHED_TOKEN,
+  UNRECOGNIZED_VERSION_OF_LOOKUP_MAP,
   UNSUPPORTED_BANG_EQ_EQ,
   UNSUPPORTED_EQ_EQ_EQ,
   UNSUPPORTED_LITERAL_SYMBOL,
@@ -486,6 +495,11 @@ class MessageTemplate {
       MessageKind.NOT_ASSIGNABLE:
         const MessageTemplate(MessageKind.NOT_ASSIGNABLE,
           "'#{fromType}' is not assignable to '#{toType}'."),
+
+      MessageKind.FORIN_NOT_ASSIGNABLE:
+        const MessageTemplate(MessageKind.FORIN_NOT_ASSIGNABLE,
+          "The element type '#{currentType}' of '#{expressionType}' "
+          "is not assignable to '#{elementType}'."),
 
       MessageKind.VOID_EXPRESSION:
         const MessageTemplate(MessageKind.VOID_EXPRESSION,
@@ -2083,6 +2097,20 @@ main() => A.A = 1;
         const MessageTemplate(MessageKind.LIBRARY_NOT_FOUND,
           "Library not found '#{resolvedUri}'."),
 
+      MessageKind.LIBRARY_NOT_SUPPORTED:
+        const MessageTemplate(MessageKind.LIBRARY_NOT_SUPPORTED,
+          "Library not supported '#{resolvedUri}'.",
+          howToFix: "Try removing the dependency or enabling support using "
+                    "the '--categories' option.",
+          examples: const [/*
+              """
+              import 'dart:io';
+              main() {}
+              """
+          */]),
+          // TODO(johnniwinther): Enable example when message_kind_test.dart
+          // supports library loader callbacks.
+
       MessageKind.UNSUPPORTED_EQ_EQ_EQ:
         const MessageTemplate(MessageKind.UNSUPPORTED_EQ_EQ_EQ,
           "'===' is not an operator. "
@@ -2232,6 +2260,13 @@ import '../../Udyn[mic ils/expect.dart';
 
 main() {}
 """]),
+
+      MessageKind.INVALID_PACKAGE_CONFIG:
+          const MessageTemplate(MessageKind.INVALID_PACKAGE_CONFIG,
+            """Package config file '#{uri}' is invalid.
+#{exception}""",
+            howToFix: DONT_KNOW_HOW_TO_FIX
+      ),
 
       MessageKind.INVALID_PACKAGE_URI:
         const MessageTemplate(MessageKind.INVALID_PACKAGE_URI,
@@ -2882,6 +2917,10 @@ Please include the following information:
           howToFix:
             "Try replacing '#{shownType}' with '#{shownTypeSuggestion}'."),
 
+      MessageKind.NO_COMMON_SUBTYPES:
+        const MessageTemplate(MessageKind.NO_COMMON_SUBTYPES,
+           "Types '#{left}' and '#{right}' have no common subtypes."),
+
       MessageKind.HIDDEN_WARNINGS_HINTS:
         const MessageTemplate(MessageKind.HIDDEN_WARNINGS_HINTS,
           "#{warnings} warning(s) and #{hints} hint(s) suppressed in #{uri}."),
@@ -3251,6 +3290,14 @@ $IMPORT_EXPERIMENTAL_MIRRORS_PADDING#{importChain}
 ****************************************************************
 '''),
 
+      MessageKind.DISALLOWED_LIBRARY_IMPORT:
+        const MessageTemplate(MessageKind.DISALLOWED_LIBRARY_IMPORT, '''
+Your app imports the unsupported library '#{uri}' via:
+''''''
+$DISALLOWED_LIBRARY_IMPORT_PADDING#{importChain}
+
+Use the --categories option to support import of '#{uri}'.
+'''),
 
       MessageKind.MIRRORS_LIBRARY_NOT_SUPPORT_BY_BACKEND:
         const MessageTemplate(
@@ -3284,10 +3331,20 @@ $IMPORT_EXPERIMENTAL_MIRRORS_PADDING#{importChain}
           "more code and prevents the compiler from doing some optimizations.",
           howToFix: "Consider removing this 'noSuchMethod' implementation."),
 
+      MessageKind.UNRECOGNIZED_VERSION_OF_LOOKUP_MAP:
+        const MessageTemplate(MessageKind.UNRECOGNIZED_VERSION_OF_LOOKUP_MAP,
+          "Unsupported version of package:lookup_map.",
+          howToFix: DONT_KNOW_HOW_TO_FIX),
 
   }; // End of TEMPLATES.
 
+  /// Padding used before and between import chains in the message for
+  /// [MessageKind.IMPORT_EXPERIMENTAL_MIRRORS].
   static const String IMPORT_EXPERIMENTAL_MIRRORS_PADDING = '\n*   ';
+
+  /// Padding used before and between import chains in the message for
+  /// [MessageKind.DISALLOWED_LIBRARY_IMPORT].
+  static const String DISALLOWED_LIBRARY_IMPORT_PADDING = '\n  ';
 
   toString() => template;
 

@@ -11,6 +11,7 @@ library dart2js.use_unused_api;
 import '../compiler.dart' as api;
 
 import 'colors.dart' as colors;
+import 'compiler.dart' as compiler;
 import 'constants/constant_system.dart' as constants;
 import 'constants/constructors.dart' as constants;
 import 'constants/evaluation.dart' as constants;
@@ -22,6 +23,7 @@ import 'tree_ir/tree_ir_nodes.dart' as tree_ir;
 import 'dart_types.dart' as dart_types;
 import 'dart2js.dart' as dart2js;
 import 'compiler.dart' as dart2jslib;
+import 'diagnostics/source_span.dart' as diagnostics;
 import 'elements/elements.dart' as elements;
 import 'elements/modelx.dart' as modelx;
 import 'elements/visitor.dart' as elements_visitor;
@@ -44,7 +46,7 @@ import 'tree/tree.dart' as tree;
 import 'util/util.dart' as util;
 import 'world.dart';
 
-import 'scanner/scannerlib.dart' show
+import 'parser/partial_elements.dart' show
     PartialClassElement,
     PartialFunctionElement;
 
@@ -55,7 +57,7 @@ class ElementVisitor extends elements_visitor.BaseElementVisitor {
 void main(List<String> arguments) {
   useApi(null);
   dart2js.main(arguments);
-  dart2jslib.isPublicName(null);
+  elements.Name.isPublicName(null);
   useConstant();
   useNode(null);
   useUtil(null);
@@ -84,7 +86,9 @@ void main(List<String> arguments) {
   useTreeVisitors();
 }
 
-useApi(api.ReadStringFromUri uri) {
+useApi([api.ReadStringFromUri uri, compiler.Compiler compiler]) {
+  compiler.analyzeUri(null);
+  new diagnostics.SourceSpan.fromNode(null, null);
 }
 
 class NullConstantConstructorVisitor
@@ -222,7 +226,7 @@ useJsOther(js.SimpleJavaScriptPrintingContext context) {
 }
 
 useJsBackend(js_backend.JavaScriptBackend backend) {
-  backend.assembleCode(null);
+  backend.getGeneratedCode(null);
 }
 
 useConcreteTypesInferrer(concrete_types_inferrer.ConcreteTypesInferrer c) {
@@ -266,7 +270,9 @@ usedByTests() {
   sourceFileProvider.getSourceFile(null);
   world.hasAnyUserDefinedGetter(null, null);
   world.subclassesOf(null);
-  world.classHierarchyNode(null);
+  world.getClassHierarchyNode(null);
+  world.getClassSet(null);
+  world.haveAnyCommonSubtypes(null, null);
   typeGraphInferrer.getCallersOf(null);
   dart_types.Types.sorted(null);
   new dart_types.Types(compiler).copy(compiler);
@@ -325,9 +331,7 @@ useProgramBuilder(program_builder.ProgramBuilder builder) {
 useSemanticVisitor() {
   operators.UnaryOperator.fromKind(null);
   operators.BinaryOperator.fromKind(null);
-  new semantic_visitor.BulkSendVisitor()
-      ..apply(null, null)
-      ..visitSuperFieldFieldCompound(null, null, null, null, null, null);
+  new semantic_visitor.BulkSendVisitor()..apply(null, null);
   new semantic_visitor.TraversalVisitor(null).apply(null, null);
   new semantic_visitor.BulkDeclarationVisitor().apply(null, null);
 }

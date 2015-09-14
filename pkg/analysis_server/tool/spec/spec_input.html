@@ -1308,6 +1308,13 @@
               The offset of the name of the type within the file.
             </p>
           </field>
+          <field name="superOnly" optional="true">
+            <ref>bool</ref>
+            <p>
+              True if the client is only requesting superclasses and
+              interfaces hierarchy.
+            </p>
+          </field>
         </params>
         <result>
           <field name="hierarchyItems" optional="true">
@@ -2054,6 +2061,13 @@
             <p>
               True if the client wants to enable support for the
               proposed "null aware operators" feature.
+            </p>
+          </field>
+          <field name="enableSuperMixins" optional="true">
+            <ref>bool</ref>
+            <p>
+              True if the client wants to enable spport for the
+              proposed "less restricted mixins" proposal (DEP 34).
             </p>
           </field>
           <field name="generateDart2jsHints" optional="true">
@@ -3040,7 +3054,7 @@
             <p>
               The indexes of the targets (in the enclosing navigation response)
               to which the given region is bound. By opening the target, clients
-              can implement one form of navigation.
+              can implement one form of navigation. This list cannot be empty.
             </p>
           </field>
         </object>

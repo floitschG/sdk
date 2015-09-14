@@ -16,7 +16,7 @@ import 'package:analysis_server/src/services/completion/common_usage_computer.da
 import 'package:analysis_server/src/services/completion/completion_manager.dart';
 import 'package:analysis_server/src/services/completion/completion_target.dart';
 import 'package:analysis_server/src/services/completion/dart_completion_cache.dart';
-import 'package:analysis_server/src/services/completion/import_uri_contributor.dart';
+import 'package:analysis_server/src/services/completion/uri_contributor.dart';
 import 'package:analysis_server/src/services/completion/imported_reference_contributor.dart';
 import 'package:analysis_server/src/services/completion/keyword_contributor.dart';
 import 'package:analysis_server/src/services/completion/local_reference_contributor.dart';
@@ -92,7 +92,7 @@ class DartCompletionManager extends CompletionManager {
         new ArgListContributor(),
         new CombinatorContributor(),
         new PrefixedElementContributor(),
-        new ImportUriContributor(),
+        new UriContributor(),
       ];
     }
     if (commonUsageComputer == null) {
@@ -322,17 +322,20 @@ class DartCompletionRequest extends CompletionRequestImpl {
       Source source, int offset, this.cache)
       : super(server, context, source, offset);
 
-  factory DartCompletionRequest.from(CompletionRequestImpl request,
-      DartCompletionCache cache) => new DartCompletionRequest(
-      request.server, request.context, request.source, request.offset, cache);
+  factory DartCompletionRequest.from(
+          CompletionRequestImpl request, DartCompletionCache cache) =>
+      new DartCompletionRequest(request.server, request.context, request.source,
+          request.offset, cache);
 
   /**
    * Return the original text from the [replacementOffset] to the [offset]
    * that can be used to filter the suggestions on the server side.
    */
   String get filterText {
-    return context.getContents(source).data.substring(
-        replacementOffset, offset);
+    return context
+        .getContents(source)
+        .data
+        .substring(replacementOffset, offset);
   }
 
   /**
@@ -378,9 +381,12 @@ class DartCompletionRequest extends CompletionRequestImpl {
         // because [DartCompletionCache] may be caching that suggestion
         // for future completion requests
         _suggestions[index] = new CompletionSuggestion(
-            CompletionSuggestionKind.IDENTIFIER, suggestion.relevance,
-            suggestion.completion, suggestion.selectionOffset,
-            suggestion.selectionLength, suggestion.isDeprecated,
+            CompletionSuggestionKind.IDENTIFIER,
+            suggestion.relevance,
+            suggestion.completion,
+            suggestion.selectionOffset,
+            suggestion.selectionLength,
+            suggestion.isDeprecated,
             suggestion.isPotential,
             declaringType: suggestion.declaringType,
             parameterNames: suggestion.parameterNames,

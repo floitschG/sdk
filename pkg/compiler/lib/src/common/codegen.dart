@@ -24,7 +24,7 @@ import '../enqueue.dart' show
     WorldImpact;
 import '../js_backend/js_backend.dart' show
     JavaScriptBackend;
-import '../resolution/resolution.dart' show
+import '../resolution/tree_elements.dart' show
     TreeElements;
 import '../universe/universe.dart' show
     Selector,
@@ -112,7 +112,6 @@ class CodegenRegistry extends Registry {
 
   void registerCompileTimeConstant(ConstantValue constant) {
     backend.registerCompileTimeConstant(constant, this);
-    backend.constants.addCompileTimeConstantForEmission(constant);
   }
 
   void registerTypeVariableBoundsSubtypeCheck(DartType subtype,
@@ -146,6 +145,7 @@ class CodegenRegistry extends Registry {
 
   void registerTypeConstant(ClassElement element) {
     backend.customElementsAnalysis.registerTypeConstant(element, world);
+    backend.lookupMapAnalysis.registerTypeConstant(element);
   }
 
   void registerStaticInvocation(Element element) {

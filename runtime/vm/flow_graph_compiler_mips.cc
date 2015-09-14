@@ -97,11 +97,9 @@ RawTypedData* CompilerDeoptInfo::CreateDeoptInfo(FlowGraphCompiler* compiler,
   Zone* zone = compiler->zone();
 
   // Current PP, FP, and PC.
-  builder->AddPp(Function::Handle(zone, current->code().function()), slot_ix++);
+  builder->AddPp(current->function(), slot_ix++);
   builder->AddCallerFp(slot_ix++);
-  builder->AddReturnAddress(Function::Handle(zone, current->code().function()),
-                            deopt_id(),
-                            slot_ix++);
+  builder->AddReturnAddress(current->function(), deopt_id(), slot_ix++);
 
   // Callee's PC marker is not used anymore. Pass Code::null() to set to 0.
   builder->AddPcMarker(Function::Handle(zone), slot_ix++);
@@ -122,20 +120,18 @@ RawTypedData* CompilerDeoptInfo::CreateDeoptInfo(FlowGraphCompiler* compiler,
   current = current->outer();
   while (current != NULL) {
     // PP, FP, and PC.
-    builder->AddPp(
-        Function::Handle(zone, current->code().function()), slot_ix++);
+    builder->AddPp(current->function(), slot_ix++);
     builder->AddCallerFp(slot_ix++);
 
     // For any outer environment the deopt id is that of the call instruction
     // which is recorded in the outer environment.
     builder->AddReturnAddress(
-        Function::Handle(zone, current->code().function()),
+        current->function(),
         Isolate::ToDeoptAfter(current->deopt_id()),
         slot_ix++);
 
     // PC marker.
-    builder->AddPcMarker(Function::Handle(zone, previous->code().function()),
-                         slot_ix++);
+    builder->AddPcMarker(previous->function(), slot_ix++);
 
     // The values of outgoing arguments can be changed from the inlined call so
     // we must read them from the previous environment.
@@ -167,8 +163,7 @@ RawTypedData* CompilerDeoptInfo::CreateDeoptInfo(FlowGraphCompiler* compiler,
   builder->AddCallerPc(slot_ix++);
 
   // PC marker.
-  builder->AddPcMarker(Function::Handle(zone, previous->code().function()),
-                       slot_ix++);
+  builder->AddPcMarker(previous->function(), slot_ix++);
 
   // For the outermost environment, set the incoming arguments.
   for (intptr_t i = previous->fixed_parameter_count() - 1; i >= 0; i--) {
@@ -232,11 +227,11 @@ RawSubtypeTestCache* FlowGraphCompiler::GenerateCallSubtypeTestStub(
   __ LoadUniqueObject(A2, type_test_cache);
   if (test_kind == kTestTypeOneArg) {
     ASSERT(type_arguments_reg == kNoRegister);
-    __ LoadImmediate(A1, reinterpret_cast<int32_t>(Object::null()));
+    __ LoadObject(A1, Object::null_object());
     __ BranchLink(*StubCode::Subtype1TestCache_entry());
   } else if (test_kind == kTestTypeTwoArgs) {
     ASSERT(type_arguments_reg == kNoRegister);
-    __ LoadImmediate(A1, reinterpret_cast<int32_t>(Object::null()));
+    __ LoadObject(A1, Object::null_object());
     __ BranchLink(*StubCode::Subtype2TestCache_entry());
   } else if (test_kind == kTestTypeThreeArgs) {
     ASSERT(type_arguments_reg == A1);
@@ -450,7 +445,7 @@ RawSubtypeTestCache* FlowGraphCompiler::GenerateUninstantiatedTypeTest(
     __ lw(A1, Address(SP, 0));  // Get instantiator type arguments.
     // A1: instantiator type arguments.
     // Check if type arguments are null, i.e. equivalent to vector of dynamic.
-    __ LoadImmediate(T7, reinterpret_cast<int32_t>(Object::null()));
+    __ LoadObject(T7, Object::null_object());
     __ beq(A1, T7, is_instance_lbl);
     __ lw(T2,
         FieldAddress(A1, TypeArguments::type_at_offset(type_param.index())));
@@ -880,9 +875,8 @@ void FlowGraphCompiler::CopyParameters() {
 
       __ Bind(&load_default_value);
       // Load T3 with default argument.
-      const Object& value = Object::ZoneHandle(zone(),
-          parsed_function().default_parameter_values().At(
-              param_pos - num_fixed_params));
+      const Instance& value = parsed_function().DefaultParameterValueAt(
+          param_pos - num_fixed_params);
       __ LoadObject(T3, value);
       __ Bind(&assign_optional_parameter);
       // Assign T3 to fp[kFirstLocalSlotFromFp - param_pos].
@@ -914,8 +908,7 @@ void FlowGraphCompiler::CopyParameters() {
       const int param_pos = num_fixed_params + i;
       __ BranchSignedGreater(T2, Immediate(param_pos), &next_parameter);
       // Load T3 with default argument.
-      const Object& value = Object::ZoneHandle(zone(),
-          parsed_function().default_parameter_values().At(i));
+      const Object& value = parsed_function().DefaultParameterValueAt(i);
       __ LoadObject(T3, value);
       // Assign T3 to fp[kFirstLocalSlotFromFp - param_pos].
       // We do not use the final allocation index of the variable here, i.e.
@@ -961,7 +954,7 @@ void FlowGraphCompiler::CopyParameters() {
   __ Bind(&null_args_loop);
   __ addiu(T2, T2, Immediate(-kWordSize));
   __ addu(T3, T1, T2);
-  __ LoadImmediate(T5, reinterpret_cast<int32_t>(Object::null()));
+  __ LoadObject(T5, Object::null_object());
   __ bgtz(T2, &null_args_loop);
   __ delay_slot()->sw(T5, Address(T3));
   __ Bind(&null_args_loop_exit);
@@ -988,7 +981,7 @@ void FlowGraphCompiler::GenerateInlinedSetter(intptr_t offset) {
   __ lw(T0, Address(SP, 1 * kWordSize));  // Receiver.
   __ lw(T1, Address(SP, 0 * kWordSize));  // Value.
   __ StoreIntoObjectOffset(T0, offset, T1);
-  __ LoadImmediate(V0, reinterpret_cast<int32_t>(Object::null()));
+  __ LoadObject(V0, Object::null_object());
   __ Ret();
 }
 
@@ -1128,7 +1121,7 @@ void FlowGraphCompiler::CompileGraph() {
     const intptr_t context_index =
         parsed_function().current_context_var()->index();
     if (num_locals > 1) {
-      __ LoadImmediate(V0, reinterpret_cast<int32_t>(Object::null()));
+      __ LoadObject(V0, Object::null_object());
     }
     for (intptr_t i = 0; i < num_locals; ++i) {
       // Subtract index i (locals lie at lower addresses than FP).
@@ -1576,7 +1569,8 @@ void FlowGraphCompiler::EmitTestAndCall(const ICData& ic_data,
                      *StubCode::CallStaticFunction_entry(),
                      RawPcDescriptors::kOther,
                      locs);
-    const Function& function = Function::Handle(zone(), ic_data.GetTargetAt(0));
+    const Function& function = Function::ZoneHandle(
+        zone(), ic_data.GetTargetAt(0));
     AddStaticCallTarget(function);
     __ Drop(argument_count);
     if (kNumChecks > 1) {

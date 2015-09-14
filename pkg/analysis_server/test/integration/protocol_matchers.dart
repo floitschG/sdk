@@ -629,12 +629,15 @@ final Matcher isSearchFindTopLevelDeclarationsResult = new LazyMatcher(() => new
  * {
  *   "file": FilePath
  *   "offset": int
+ *   "superOnly": optional bool
  * }
  */
 final Matcher isSearchGetTypeHierarchyParams = new LazyMatcher(() => new MatchesJsonObject(
   "search.getTypeHierarchy params", {
     "file": isFilePath,
     "offset": isInt
+  }, optionalFields: {
+    "superOnly": isBool
   }));
 
 /**
@@ -1079,6 +1082,7 @@ final Matcher isAnalysisErrorType = new MatchesEnum("AnalysisErrorType", [
  *   "enableDeferredLoading": optional bool
  *   "enableEnums": optional bool
  *   "enableNullAwareOperators": optional bool
+ *   "enableSuperMixins": optional bool
  *   "generateDart2jsHints": optional bool
  *   "generateHints": optional bool
  *   "generateLints": optional bool
@@ -1090,6 +1094,7 @@ final Matcher isAnalysisOptions = new LazyMatcher(() => new MatchesJsonObject(
     "enableDeferredLoading": isBool,
     "enableEnums": isBool,
     "enableNullAwareOperators": isBool,
+    "enableSuperMixins": isBool,
     "generateDart2jsHints": isBool,
     "generateHints": isBool,
     "generateLints": isBool

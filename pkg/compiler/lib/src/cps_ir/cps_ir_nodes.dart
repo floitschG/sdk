@@ -3,7 +3,8 @@
 // BSD-style license that can be found in the LICENSE file.
 library dart2js.ir_nodes;
 
-import '../constants/values.dart' as values show ConstantValue;
+import 'dart:collection';
+import '../constants/values.dart' as values;
 import '../dart_types.dart' show DartType, InterfaceType, TypeVariableType;
 import '../elements/elements.dart';
 import '../io/source_information.dart' show SourceInformation;
@@ -22,6 +23,10 @@ import '../native/native.dart' as native show NativeBehavior;
 abstract class Node {
   /// A pointer to the parent node. Is null until set by optimization passes.
   Node parent;
+
+  /// Workaround for a slow Object.hashCode in the VM.
+  static int _usedHashCodes = 0;
+  final int hashCode = ++_usedHashCodes;
 
   accept(Visitor visitor);
 }
@@ -115,6 +120,41 @@ abstract class Definition<T extends Definition<T>> extends Node {
   }
 }
 
+class EffectiveUseIterator extends Iterator<Reference<Primitive>> {
+  Reference<Primitive> current;
+  Reference<Primitive> next;
+  final List<Refinement> stack = <Refinement>[];
+
+  EffectiveUseIterator(Primitive prim) : next = prim.firstRef;
+
+  bool moveNext() {
+    Reference<Primitive> ref = next;
+    while (true) {
+      if (ref == null) {
+        if (stack.isNotEmpty) {
+          ref = stack.removeLast().firstRef;
+        } else {
+          current = null;
+          return false;
+        }
+      } else if (ref.parent is Refinement) {
+        stack.add(ref.parent);
+        ref = ref.next;
+      } else {
+        current = ref;
+        next = current.next;
+        return true;
+      }
+    }
+  }
+}
+
+class EffectiveUseIterable extends IterableBase<Reference<Primitive>> {
+  Primitive primitive;
+  EffectiveUseIterable(this.primitive);
+  EffectiveUseIterator get iterator => new EffectiveUseIterator(primitive);
+}
+
 /// A named value.
 ///
 /// The identity of the [Primitive] object is the name of the value.
@@ -149,6 +189,34 @@ abstract class Primitive extends Definition<Primitive> {
   /// The source information associated with this primitive.
   // TODO(johnniwinther): Require source information for all primitives.
   SourceInformation get sourceInformation => null;
+
+  /// If this is a [Refinement] node, returns the value being refined.
+  Primitive get effectiveDefinition => this;
+
+  /// True if the two primitives are (refinements of) the same value.
+  bool sameValue(Primitive other) {
+    return effectiveDefinition == other.effectiveDefinition;
+  }
+
+  /// Iterates all non-refinement uses of the primitive and all uses of
+  /// a [Refinement] of this primitive (transitively).
+  ///
+  /// Notes regarding concurrent modification:
+  /// - The current reference may safely be unlinked.
+  /// - Yet unvisited references may not be unlinked.
+  /// - References to this primitive created during iteration will not be seen.
+  /// - References to a refinement of this primitive may not be created during
+  ///   iteration.
+  EffectiveUseIterable get effectiveUses => new EffectiveUseIterable(this);
+
+  bool get hasMultipleEffectiveUses {
+    Iterator it = effectiveUses.iterator;
+    return it.moveNext() && it.moveNext();
+  }
+
+  bool get hasNoEffectiveUses {
+    return effectiveUses.isEmpty;
+  }
 }
 
 /// Operands to invocations and primitives are always variables.  They point to
@@ -435,6 +503,28 @@ class InvokeConstructor extends CallExpression {
   accept(Visitor visitor) => visitor.visitInvokeConstructor(this);
 }
 
+/// An alias for [value] in a context where the value is known to satisfy
+/// [type].
+///
+/// Refinement nodes are inserted before the type propagator pass and removed
+/// afterwards, so as not to complicate passes that don't reason about types,
+/// but need to reason about value references being identical (i.e. referring
+/// to the same primitive).
+class Refinement extends Primitive {
+  Reference<Primitive> value;
+  final TypeMask type;
+
+  Refinement(Primitive value, this.type)
+    : value = new Reference<Primitive>(value);
+
+  bool get isSafeForElimination => true;
+  bool get isSafeForReordering => false;
+
+  accept(Visitor visitor) => visitor.visitRefinement(this);
+
+  Primitive get effectiveDefinition => value.definition.effectiveDefinition;
+}
+
 /// An "is" type test.
 ///
 /// Returns `true` if [value] is an instance of [type].
@@ -650,29 +740,36 @@ class InvokeContinuation extends TailExpression {
   accept(Visitor visitor) => visitor.visitInvokeContinuation(this);
 }
 
-/// The base class of things which can be tested and branched on.
-abstract class Condition extends Node {
-}
-
-class IsTrue extends Condition {
-  final Reference<Primitive> value;
-
-  IsTrue(Primitive val) : value = new Reference<Primitive>(val);
-
-  accept(Visitor visitor) => visitor.visitIsTrue(this);
-}
-
 /// Choose between a pair of continuations based on a condition value.
 ///
 /// The two continuations must not declare any parameters.
 class Branch extends TailExpression {
-  final Condition condition;
+  final Reference<Primitive> condition;
   final Reference<Continuation> trueContinuation;
   final Reference<Continuation> falseContinuation;
 
-  Branch(this.condition, Continuation trueCont, Continuation falseCont)
-      : trueContinuation = new Reference<Continuation>(trueCont),
-        falseContinuation = new Reference<Continuation>(falseCont);
+  /// If true, only the value `true` satisfies the condition. Otherwise, any
+  /// truthy value satisfies the check.
+  ///
+  /// Non-strict checks are preferable when the condition is known to be a
+  /// boolean.
+  bool isStrictCheck;
+
+  Branch.strict(Primitive condition,
+                Continuation trueCont,
+                Continuation falseCont)
+      : this.condition = new Reference<Primitive>(condition),
+        trueContinuation = new Reference<Continuation>(trueCont),
+        falseContinuation = new Reference<Continuation>(falseCont),
+        isStrictCheck = true;
+
+  Branch.loose(Primitive condition,
+               Continuation trueCont,
+               Continuation falseCont)
+      : this.condition = new Reference<Primitive>(condition),
+        trueContinuation = new Reference<Continuation>(trueCont),
+        falseContinuation = new Reference<Continuation>(falseCont),
+        this.isStrictCheck = false;
 
   accept(Visitor visitor) => visitor.visitBranch(this);
 }
@@ -711,10 +808,12 @@ class GetField extends Primitive {
   accept(Visitor visitor) => visitor.visitGetField(this);
 
   bool get isSafeForElimination => objectIsNotNull;
-  bool get isSafeForReordering => objectIsNotNull && field.isFinal;
+  bool get isSafeForReordering => false;
+
+  toString() => 'GetField($field)';
 }
 
-/// Get the length of a native list.
+/// Get the length of a string or native list.
 class GetLength extends Primitive {
   final Reference<Primitive> object;
 
@@ -729,9 +828,10 @@ class GetLength extends Primitive {
   accept(Visitor v) => v.visitGetLength(this);
 }
 
-/// Read an entry from a native list.
+/// Read an entry from a string or native list.
 ///
-/// [object] must be null or a native list, and [index] must be an integer.
+/// [object] must be null or a native list or a string, and [index] must be
+/// an integer.
 class GetIndex extends Primitive {
   final Reference<Primitive> object;
   final Reference<Primitive> index;
@@ -860,12 +960,26 @@ class CreateInstance extends Primitive {
 
   bool get isSafeForElimination => true;
   bool get isSafeForReordering => true;
+
+  toString() => 'CreateInstance($classElement)';
 }
 
 class Interceptor extends Primitive {
   final Reference<Primitive> input;
   final Set<ClassElement> interceptedClasses = new Set<ClassElement>();
   final SourceInformation sourceInformation;
+
+  /// If non-null, all uses of this the interceptor call are guaranteed to
+  /// see this value.
+  ///
+  /// The interceptor call is not immediately replaced by the constant, because
+  /// that might prevent the interceptor from being shared.
+  ///
+  /// The precise input type is not known when sharing interceptors, because
+  /// refinement nodes have been removed by then. So this field carries the
+  /// known constant until we know if it should be shared or replaced by
+  /// the constant.
+  values.InterceptorConstantValue constantValue;
 
   Interceptor(Primitive input, this.sourceInformation)
       : this.input = new Reference<Primitive>(input);
@@ -1185,9 +1299,7 @@ abstract class Visitor<T> {
   T visitGetLength(GetLength node);
   T visitGetIndex(GetIndex node);
   T visitSetIndex(SetIndex node);
-
-  // Conditions.
-  T visitIsTrue(IsTrue node);
+  T visitRefinement(Refinement node);
 
   // Support for literal foreign code.
   T visitForeignCode(ForeignCode node);
@@ -1195,9 +1307,6 @@ abstract class Visitor<T> {
 
 /// Visits all non-recursive children of a CPS term, i.e. anything
 /// not of type [Expression] or [Continuation].
-///
-/// Note that the non-recursive nodes can contain other nodes inside of them,
-/// e.g. [Branch] contains an [IsTrue] which contains a [Reference].
 ///
 /// The `process*` methods are called in pre-order for every node visited.
 /// These can be overridden without disrupting the visitor traversal.
@@ -1295,7 +1404,7 @@ class LeafVisitor implements Visitor {
     processBranch(node);
     processReference(node.trueContinuation);
     processReference(node.falseContinuation);
-    visit(node.condition);
+    processReference(node.condition);
   }
 
   processTypeCast(TypeCast node) {}
@@ -1372,12 +1481,6 @@ class LeafVisitor implements Visitor {
   visitContinuation(Continuation node) {
     processContinuation(node);
     node.parameters.forEach(visitParameter);
-  }
-
-  processIsTrue(IsTrue node) {}
-  visitIsTrue(IsTrue node) {
-    processIsTrue(node);
-    processReference(node.value);
   }
 
   processInterceptor(Interceptor node) {}
@@ -1498,6 +1601,12 @@ class LeafVisitor implements Visitor {
     processSetIndex(node);
     processReference(node.object);
     processReference(node.index);
+    processReference(node.value);
+  }
+
+  processRefinement(Refinement node) {}
+  visitRefinement(Refinement node) {
+    processRefinement(node);
     processReference(node.value);
   }
 }

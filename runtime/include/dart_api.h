@@ -852,6 +852,8 @@ typedef bool (*Dart_EntropySource)(uint8_t* buffer, intptr_t length);
  *
  * \param vm_isolate_snapshot A buffer containing a snapshot of the VM isolate
  *   or NULL if no snapshot is provided.
+ * \param instructions_snapshot A buffer containing a snapshot of precompiled
+ *   instructions, or NULL if no snapshot is provided.
  * \param create A function to be called during isolate creation.
  *   See Dart_IsolateCreateCallback.
  * \param interrupt A function to be called when an isolate is interrupted.
@@ -865,6 +867,7 @@ typedef bool (*Dart_EntropySource)(uint8_t* buffer, intptr_t length);
  */
 DART_EXPORT bool Dart_Initialize(
     const uint8_t* vm_isolate_snapshot,
+    const uint8_t* instructions_snapshot,
     Dart_IsolateCreateCallback create,
     Dart_IsolateInterruptCallback interrupt,
     Dart_IsolateUnhandledExceptionCallback unhandled_exception,
@@ -2857,5 +2860,22 @@ DART_EXPORT bool Dart_IsServiceIsolate(Dart_Isolate isolate);
  * isolate failed to startup or does not support load requests.
  */
 DART_EXPORT Dart_Port Dart_ServiceWaitForLoadPort();
+
+
+/*
+ * ==============
+ * Precompilation
+ * ==============
+ */
+
+
+DART_EXPORT Dart_Handle Dart_Precompile();
+DART_EXPORT Dart_Handle Dart_CreatePrecompiledSnapshot(
+    uint8_t** vm_isolate_snapshot_buffer,
+    intptr_t* vm_isolate_snapshot_size,
+    uint8_t** isolate_snapshot_buffer,
+    intptr_t* isolate_snapshot_size,
+    uint8_t** instructions_snapshot_buffer,
+    intptr_t* instructions_snapshot_size);
 
 #endif  /* INCLUDE_DART_API_H_ */  /* NOLINT */

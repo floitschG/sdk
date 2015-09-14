@@ -17,6 +17,7 @@
 
 namespace dart {
 
+DECLARE_FLAG(bool, allow_absolute_addresses);
 DEFINE_FLAG(bool, print_stop_message, true, "Print stop message.");
 DECLARE_FLAG(bool, inline_alloc);
 
@@ -70,6 +71,15 @@ void Assembler::LoadExternalLabel(Register dst,
 }
 
 
+void Assembler::LoadNativeEntry(Register dst,
+                                const ExternalLabel* label,
+                                Patchability patchable) {
+  const int32_t offset = ObjectPool::element_offset(
+      object_pool_wrapper_.FindNativeEntry(label, patchable));
+  LoadWordFromPoolOffset(dst, offset - kHeapObjectTag);
+}
+
+
 void Assembler::call(const ExternalLabel* label) {
   {  // Encode movq(TMP, Immediate(label->address())), but always as imm64.
     AssemblerBuffer::EnsureCapacity ensured(&buffer_);
@@ -81,33 +91,22 @@ void Assembler::call(const ExternalLabel* label) {
 }
 
 
-void Assembler::CallPatchable(const ExternalLabel* label) {
+void Assembler::CallPatchable(const StubEntry& stub_entry) {
   ASSERT(constant_pool_allowed());
   intptr_t call_start = buffer_.GetPosition();
   const int32_t offset = ObjectPool::element_offset(
-      object_pool_wrapper_.FindExternalLabel(label, kPatchable));
+      object_pool_wrapper_.FindExternalLabel(&stub_entry.label(), kPatchable));
   call(Address::AddressBaseImm32(PP, offset - kHeapObjectTag));
   ASSERT((buffer_.GetPosition() - call_start) == kCallExternalLabelSize);
 }
 
 
-void Assembler::Call(const ExternalLabel* label) {
+void Assembler::Call(const StubEntry& stub_entry) {
   ASSERT(constant_pool_allowed());
   const int32_t offset = ObjectPool::element_offset(
-      object_pool_wrapper_.FindExternalLabel(label, kNotPatchable));
+      object_pool_wrapper_.FindExternalLabel(&stub_entry.label(),
+                                             kNotPatchable));
   call(Address::AddressBaseImm32(PP, offset - kHeapObjectTag));
-}
-
-
-void Assembler::CallPatchable(const StubEntry& stub_entry) {
-  const ExternalLabel label(stub_entry.EntryPoint());
-  CallPatchable(&label);
-}
-
-
-void Assembler::Call(const StubEntry& stub_entry) {
-  const ExternalLabel label(stub_entry.EntryPoint());
-  Call(&label);
 }
 
 
@@ -2544,29 +2543,13 @@ void Assembler::j(Condition condition, Label* label, bool near) {
 }
 
 
-void Assembler::j(Condition condition, const ExternalLabel* label) {
-  Label no_jump;
-  // Negate condition.
-  j(static_cast<Condition>(condition ^ 1), &no_jump, Assembler::kNearJump);
-  jmp(label);
-  Bind(&no_jump);
-}
-
-
-void Assembler::J(Condition condition, const ExternalLabel* label,
-                  Register pp) {
-  Label no_jump;
-  // Negate condition.
-  j(static_cast<Condition>(condition ^ 1), &no_jump, Assembler::kNearJump);
-  Jmp(label, pp);
-  Bind(&no_jump);
-}
-
-
 void Assembler::J(Condition condition, const StubEntry& stub_entry,
                   Register pp) {
-  const ExternalLabel label(stub_entry.EntryPoint());
-  J(condition, &label, pp);
+  Label no_jump;
+  // Negate condition.
+  j(static_cast<Condition>(condition ^ 1), &no_jump, Assembler::kNearJump);
+  Jmp(stub_entry, pp);
+  Bind(&no_jump);
 }
 
 
@@ -2626,39 +2609,27 @@ void Assembler::jmp(const ExternalLabel* label) {
 
 
 void Assembler::jmp(const StubEntry& stub_entry) {
-  const ExternalLabel label(stub_entry.EntryPoint());
-  jmp(&label);
+  jmp(&stub_entry.label());
 }
 
 
-void Assembler::JmpPatchable(const ExternalLabel* label, Register pp) {
+void Assembler::JmpPatchable(const StubEntry& stub_entry, Register pp) {
   ASSERT((pp != PP) || constant_pool_allowed());
   intptr_t call_start = buffer_.GetPosition();
   const int32_t offset = ObjectPool::element_offset(
-      object_pool_wrapper_.FindExternalLabel(label, kPatchable));
+      object_pool_wrapper_.FindExternalLabel(&stub_entry.label(), kPatchable));
   // Patchable jumps always use a 32-bit immediate encoding.
   jmp(Address::AddressBaseImm32(pp, offset - kHeapObjectTag));
   ASSERT((buffer_.GetPosition() - call_start) == JumpPattern::kLengthInBytes);
 }
 
 
-void Assembler::JmpPatchable(const StubEntry& stub_entry, Register pp) {
-  const ExternalLabel label(stub_entry.EntryPoint());
-  JmpPatchable(&label, pp);
-}
-
-
-void Assembler::Jmp(const ExternalLabel* label, Register pp) {
+void Assembler::Jmp(const StubEntry& stub_entry, Register pp) {
   ASSERT((pp != PP) || constant_pool_allowed());
   const int32_t offset = ObjectPool::element_offset(
-      object_pool_wrapper_.FindExternalLabel(label, kNotPatchable));
+      object_pool_wrapper_.FindExternalLabel(&stub_entry.label(),
+                                             kNotPatchable));
   jmp(Address(pp, offset - kHeapObjectTag));
-}
-
-
-void Assembler::Jmp(const StubEntry& stub_entry, Register pp) {
-  const ExternalLabel label(stub_entry.EntryPoint());
-  Jmp(&label, pp);
 }
 
 
@@ -2857,6 +2828,7 @@ void Assembler::LoadObjectHelper(Register dst,
     LoadWordFromPoolOffset(dst, offset - kHeapObjectTag);
   } else {
     ASSERT(object.IsSmi() || object.InVMHeap());
+    ASSERT(object.IsSmi() || FLAG_allow_absolute_addresses);
     LoadImmediate(dst, Immediate(reinterpret_cast<int64_t>(object.raw())));
   }
 }
@@ -2891,6 +2863,7 @@ void Assembler::StoreObject(const Address& dst, const Object& object) {
     LoadObject(TMP, object);
     movq(dst, TMP);
   } else {
+    ASSERT(object.IsSmi() || FLAG_allow_absolute_addresses);
     MoveImmediate(dst, Immediate(reinterpret_cast<int64_t>(object.raw())));
   }
 }
@@ -2903,6 +2876,7 @@ void Assembler::PushObject(const Object& object) {
     LoadObject(TMP, object);
     pushq(TMP);
   } else {
+    ASSERT(object.IsSmi() || FLAG_allow_absolute_addresses);
     PushImmediate(Immediate(reinterpret_cast<int64_t>(object.raw())));
   }
 }
@@ -2916,6 +2890,7 @@ void Assembler::CompareObject(Register reg, const Object& object) {
         ObjectPool::element_offset(object_pool_wrapper_.FindObject(object));
     cmpq(reg, Address(PP, offset-kHeapObjectTag));
   } else {
+    ASSERT(object.IsSmi() || FLAG_allow_absolute_addresses);
     CompareImmediate(
         reg, Immediate(reinterpret_cast<int64_t>(object.raw())));
   }
@@ -3065,7 +3040,8 @@ void Assembler::VerifyUninitialized(const Address& dest) {
 #else
 #error Only supported in DEBUG mode
 #endif
-  cmpq(dest, Immediate(reinterpret_cast<uint64_t>(Object::null())));
+  LoadObject(TMP, Object::null_object());
+  cmpq(dest, TMP);
   j(EQUAL, &ok, Assembler::kNearJump);
   static const bool kFixedLengthEncoding = true;
   Stop("Expected zapped, Smi or null", kFixedLengthEncoding);
@@ -3356,7 +3332,7 @@ void Assembler::PopRegisters(intptr_t cpu_register_set,
 
 
 void Assembler::EnterCallRuntimeFrame(intptr_t frame_space) {
-  EnterFrame(0);
+  EnterStubFrame();
 
   // TODO(vegorov): avoid saving FpuTMP, it is used only as scratch.
   PushRegisters(CallingConventions::kVolatileCpuRegisters,
@@ -3376,23 +3352,15 @@ void Assembler::LeaveCallRuntimeFrame() {
       RegisterSet::RegisterCount(CallingConventions::kVolatileXmmRegisters);
   const intptr_t kPushedRegistersSize =
       kPushedCpuRegistersCount * kWordSize +
-      kPushedXmmRegistersCount * kFpuRegisterSize;
+      kPushedXmmRegistersCount * kFpuRegisterSize +
+      2 * kWordSize;  // PP, pc marker from EnterStubFrame
   leaq(RSP, Address(RBP, -kPushedRegistersSize));
 
   // TODO(vegorov): avoid saving FpuTMP, it is used only as scratch.
   PopRegisters(CallingConventions::kVolatileCpuRegisters,
                CallingConventions::kVolatileXmmRegisters);
 
-  leave();
-}
-
-
-void Assembler::CallCFunction(const ExternalLabel* label) {
-  // Reserve shadow space for outgoing arguments.
-  if (CallingConventions::kShadowSpaceBytes != 0) {
-    subq(RSP, Immediate(CallingConventions::kShadowSpaceBytes));
-  }
-  call(label);
+  LeaveStubFrame();
 }
 
 
@@ -3491,6 +3459,7 @@ void Assembler::MaybeTraceAllocation(intptr_t cid,
   intptr_t state_offset = ClassTable::StateOffsetFor(cid);
   Register temp_reg = TMP;
   if (inline_isolate) {
+    ASSERT(FLAG_allow_absolute_addresses);
     ClassTable* class_table = Isolate::Current()->class_table();
     ClassHeapStats** table_ptr = class_table->TableAddressFor(cid);
     if (cid < kNumPredefinedCids) {
@@ -3521,6 +3490,7 @@ void Assembler::UpdateAllocationStats(intptr_t cid,
       ClassTable::CounterOffsetFor(cid, space == Heap::kNew);
   Register temp_reg = TMP;
   if (inline_isolate) {
+    ASSERT(FLAG_allow_absolute_addresses);
     ClassTable* class_table = Isolate::Current()->class_table();
     ClassHeapStats** table_ptr = class_table->TableAddressFor(cid);
     if (cid < kNumPredefinedCids) {

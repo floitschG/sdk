@@ -35,8 +35,8 @@ const Map<String, String> specialElementFlags = const {
   'deprecated': '0x20'
 };
 
-final GeneratedFile target = new GeneratedFile(
-    '../../lib/src/generated_protocol.dart', () {
+final GeneratedFile target =
+    new GeneratedFile('../../lib/src/generated_protocol.dart', () {
   CodegenProtocolVisitor visitor = new CodegenProtocolVisitor(readApi());
   return visitor.collectCode(visitor.visitApi);
 });
@@ -121,7 +121,7 @@ class CodegenProtocolVisitor extends DartCodegenVisitor with CodeGenerator {
       String dartTypeName = capitalize(impliedType.camelName);
       if (type == null) {
         emitEmptyObjectClass(dartTypeName, impliedType);
-      } else if (type is TypeObject || type == null) {
+      } else if (type is TypeObject) {
         writeln();
         emitObjectClass(dartTypeName, type, impliedType);
       } else if (type is TypeEnum) {
@@ -563,8 +563,8 @@ class CodegenProtocolVisitor extends DartCodegenVisitor with CodeGenerator {
       writeln('factory RefactoringOptions.fromJson(JsonDecoder jsonDecoder, '
           'String jsonPath, Object json, RefactoringKind kind) {');
       indent(() {
-        writeln(
-            'return _refactoringOptionsFromJson(jsonDecoder, jsonPath, ' 'json, kind);');
+        writeln('return _refactoringOptionsFromJson(jsonDecoder, jsonPath, '
+            'json, kind);');
       });
       writeln('}');
       return;
