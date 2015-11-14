@@ -91,7 +91,7 @@ class DebuggerLocation {
           return new DebuggerLocation.file(scripts[0], line, col);
         } else {
           // TODO(turnidge): Allow the user to disambiguate.
-          return new DebuggerLocation.error("Script '${scriptName}' is ambigous");
+          return new DebuggerLocation.error("Script '${scriptName}' is ambiguous");
         }
       });
     } else {
